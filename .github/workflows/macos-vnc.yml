@@ -19,9 +19,27 @@ jobs:
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           echo "✅ VNC Enabled!"
 
-      - name: Set VNC Password
+      - name: Set VNC Password (Legacy VNC)
+        shell: bash
         run: |
-          echo "P@ssw0rd123!" | sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw P@ssw0rd123!
+          set -e
+          # Ensure RemoteManagement directories exist and proper ownership
+          sudo mkdir -p /Library/Preferences
+          # Use kickstart with sudo to set legacy VNC password
+          echo "P@ssw0rd123!" | sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -restart -agent -privs -all \
+            -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw P@ssw0rd123!
+          # Also set system VNC password key (some runners require this)
+          sudo /usr/libexec/PlistBuddy -c "Add :VNCLegacyPasswords array" /Library/Preferences/com.apple.RemoteManagement.plist 2>/dev/null || true
+          sudo /usr/libexec/PlistBuddy -c "Delete :VNCLegacyPasswords:0" /Library/Preferences/com.apple.RemoteManagement.plist 2>/dev/null || true
+          HASH=$(python3 - <<'PY'
+import sys,hashlib
+print(hashlib.md5(b"P@ssw0rd123!").hexdigest())
+PY
+)
+          sudo /usr/libexec/PlistBuddy -c "Add :VNCLegacyPasswords:0 data $(echo $HASH | xxd -r -p | base64)" /Library/Preferences/com.apple.RemoteManagement.plist
+          sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
           echo "✅ VNC Password Set!"
 
       - name: Start Cloudflare Tunnel
