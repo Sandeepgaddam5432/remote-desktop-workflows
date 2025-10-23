@@ -21,7 +21,7 @@ jobs:
 
       - name: Set VNC Password
         run: |
-          echo "P@ssw0rd123!" | /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw P@ssw0rd123!
+          echo "P@ssw0rd123!" | sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw P@ssw0rd123!
           echo "✅ VNC Password Set!"
 
       - name: Start Cloudflare Tunnel
