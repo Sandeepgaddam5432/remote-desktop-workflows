@@ -20,6 +20,7 @@
   - [macOS Clients](#-macos-clients)
   - [Linux Clients](#-linux-clients)
   - [Mobile Devices](#-mobile-devices)
+  - [Termux (Android Linux Environment)](#-termux-android-linux-environment)
 - [Network-Wide Access](#-network-wide-access)
 - [Specifications](#-specifications)
 - [Troubleshooting](#-troubleshooting)
@@ -302,7 +303,8 @@ vncviewer localhost:5900  # or 5901 for Linux
 #### For Windows RDP
 
 1. **Install Microsoft Remote Desktop**
-   - Download from Play Store: Microsoft Remote Desktop
+   - **Google Play Store:** [Microsoft Remote Desktop](https://play.google.com/store/apps/details?id=com.microsoft.rdc.androidx)
+   - **Alternative APK:** [APKMirror - Microsoft Remote Desktop](https://www.apkmirror.com/apk/microsoft-corporation/microsoft-remote-desktop/)
 
 2. **Setup Cloudflared on PC**
    - Run cloudflared on a PC in your network
@@ -326,7 +328,8 @@ vncviewer localhost:5900  # or 5901 for Linux
 #### For macOS/Linux VNC
 
 1. **Install VNC Viewer**
-   - Download from Play Store: VNC Viewer
+   - **Google Play Store:** [VNC Viewer](https://play.google.com/store/apps/details?id=com.realvnc.viewer.android)
+   - **Alternative APK:** [APKMirror - VNC Viewer](https://www.apkmirror.com/apk/realvnc-limited/vnc-viewer-remote-desktop/)
 
 2. **Setup Cloudflared on PC (same network)**
    ```
@@ -347,7 +350,7 @@ vncviewer localhost:5900  # or 5901 for Linux
 #### For Windows RDP
 
 1. **Install Microsoft Remote Desktop**
-   - Download from App Store: Microsoft Remote Desktop
+   - **Apple App Store:** [Microsoft Remote Desktop](https://apps.apple.com/app/microsoft-remote-desktop/id714464092)
 
 2. **Setup Cloudflared on Mac/PC**
    ```
@@ -362,11 +365,133 @@ vncviewer localhost:5900  # or 5901 for Linux
 #### For macOS/Linux VNC
 
 1. **Install VNC Viewer**
-   - Download from App Store: VNC Viewer
+   - **Apple App Store:** [VNC Viewer](https://apps.apple.com/app/vnc-viewer-remote-desktop/id352019548)
 
 2. **Setup and Connect**
    - Same process as Android VNC
    - Use port 5900 for macOS, 5901 for Linux
+
+---
+
+## 📱 Termux (Android Linux Environment)
+
+### Install Termux Officially
+
+**🚨 IMPORTANT: Don't use Google Play Store version (outdated & broken)**
+
+#### Option 1: F-Droid (Recommended)
+1. **Download F-Droid:** [F-Droid Official](https://f-droid.org/)
+2. **Install F-Droid APK** on your Android device
+3. **Search for "Termux"** in F-Droid app
+4. **Install Termux:** [Termux on F-Droid](https://f-droid.org/en/packages/com.termux/)
+
+#### Option 2: GitHub Releases
+1. **Visit GitHub:** [Termux Releases](https://github.com/termux/termux-app/releases)
+2. **Download latest APK:** `termux-app_vX.X.X+github-debug_universal.apk`
+3. **Enable "Install from Unknown Sources"** in Android settings
+4. **Install the APK**
+
+---
+
+### Using Termux for Remote Desktop Access
+
+#### Step 1: Setup Termux Environment
+```bash
+# Update packages
+pkg update && pkg upgrade
+
+# Install required packages
+pkg install wget curl git
+```
+
+#### Step 2: Install Cloudflared in Termux
+```bash
+# Download cloudflared for ARM64 (most modern Android devices)
+wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64
+
+# Make it executable
+chmod +x cloudflared-linux-arm64
+
+# Move to PATH
+mv cloudflared-linux-arm64 $PREFIX/bin/cloudflared
+
+# Verify installation
+cloudflared --version
+```
+
+#### Step 3: Connect to Remote Desktop
+
+**For Windows RDP:**
+```bash
+# Start tunnel
+cloudflared access tcp --hostname <your-tunnel-url> --url localhost:3389
+
+# Keep this terminal open, open new session
+# Install RDP client
+pkg install freerdp
+
+# Connect to Windows
+xfreerdp /v:localhost:3389 /u:runneradmin /p:P@ssw0rd123!
+```
+
+**For macOS/Linux VNC:**
+```bash
+# Start tunnel
+cloudflared access tcp --hostname <your-tunnel-url> --url localhost:5900
+
+# Install VNC client
+pkg install tigervnc
+
+# Connect to VNC
+vncviewer localhost:5900
+# Enter password when prompted: P@ssw0rd123!
+```
+
+#### Step 4: GUI Access in Termux (Optional)
+
+For better experience with graphical applications:
+
+```bash
+# Install VNC server for Termux
+pkg install x11-repo
+pkg install tigervnc xfce4
+
+# Start VNC server
+vncserver :1
+
+# In another session, connect to your remote desktop
+cloudflared access tcp --hostname <tunnel-url> --url localhost:5900
+```
+
+---
+
+### Termux Troubleshooting
+
+**Issue: "Permission denied" when installing cloudflared**
+```bash
+# Fix permissions
+termux-setup-storage
+chmod +x cloudflared-linux-arm64
+```
+
+**Issue: "Command not found" for cloudflared**
+```bash
+# Check if binary is in correct location
+ls -la $PREFIX/bin/cloudflared
+
+# If not there, move it manually
+cp cloudflared-linux-arm64 $PREFIX/bin/cloudflared
+```
+
+**Issue: VNC connection fails**
+```bash
+# Check if tunnel is running
+ps aux | grep cloudflared
+
+# Restart tunnel if needed
+pkill cloudflared
+cloudflared access tcp --hostname <tunnel-url> --url localhost:5900 &
+```
 
 ---
 
@@ -487,6 +612,7 @@ sudo ufw allow 5901/tcp
 # Kill existing cloudflared processes
 taskkill /F /IM cloudflared.exe  # Windows
 killall cloudflared              # Mac/Linux
+pkill cloudflared                # Termux
 
 # Restart cloudflared
 cloudflared access tcp --hostname <url> --url localhost:3389
@@ -499,6 +625,13 @@ cloudflared access tcp --hostname <url> --url localhost:3389
 - Verify mobile device is on same WiFi network
 - Use PC's local IP, not localhost
 - Check PC firewall allows incoming connections
+
+### Issue: Termux cloudflared not working
+
+**Solution:**
+- Check ARM architecture: `uname -m` (should be aarch64 or armv7l)
+- Download correct binary for your architecture
+- Ensure proper permissions: `chmod +x cloudflared`
 
 ---
 
@@ -554,6 +687,12 @@ A: Yes, if you can access GitHub and Cloudflare.
 **Q: Can I access this from anywhere?**
 A: Yes, as long as you have the tunnel URL and cloudflared client installed.
 
+**Q: Can I use this on rooted/jailbroken devices?**
+A: Yes, but be careful with security. Don't store sensitive data.
+
+**Q: Why not use Google Play Store Termux?**
+A: Play Store version is outdated (Android 7 target) and has many broken features. F-Droid version is actively maintained.
+
 ---
 
 ## 🤝 Contributing
@@ -572,6 +711,8 @@ Contributions are welcome! Please:
 - Performance optimizations
 - Documentation improvements
 - Security enhancements
+- Mobile app integration guides
+- Termux automation scripts
 
 ---
 
@@ -586,6 +727,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [GitHub Actions](https://github.com/features/actions) - Free CI/CD platform
 - [Cloudflare Tunnels](https://www.cloudflare.com/products/tunnel/) - Secure tunneling service
 - [AnimMouse/setup-cloudflared](https://github.com/AnimMouse/setup-cloudflared) - GitHub Action for cloudflared
+- [Termux Team](https://termux.dev/) - Android Linux environment
+- [F-Droid](https://f-droid.org/) - Open source Android app repository
 
 ---
 
