@@ -1,0 +1,61 @@
+name: LINUX DESKTOP - CLOUDFLARE
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9999
+
+    steps:
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Install Desktop Environment & VNC
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop xfce4 xfce4-goodies tightvncserver
+          echo "✅ Desktop Environment Installed!"
+
+      - name: Configure VNC Server
+        run: |
+          mkdir -p ~/.vnc
+          echo "P@ssw0rd123!" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          echo '#!/bin/bash
+          xrdb $HOME/.Xresources
+          startxfce4 &' > ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          echo "✅ VNC Configured!"
+
+      - name: Start VNC Server
+        run: |
+          vncserver :1 -geometry 1920x1080 -depth 24
+          echo "✅ VNC Server Started on port 5901!"
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          echo "============================================"
+          echo "🚀 LINUX UBUNTU DESKTOP - CLOUDFLARE TUNNEL"
+          echo "============================================"
+          echo ""
+          cloudflared tunnel --url tcp://localhost:5901 > tunnel.log 2>&1 &
+          sleep 15
+          cat tunnel.log | grep -o 'https://[^[:space:]]*trycloudflare.com'
+          echo ""
+          echo "✅ TUNNEL STARTED!"
+          echo ""
+          echo "📋 CONNECTION DETAILS:"
+          echo "   VNC PASSWORD: P@ssw0rd123!"
+          echo "   RESOLUTION: 1920x1080"
+          echo "   OS: Ubuntu 22.04 LTS"
+          echo "   DESKTOP: XFCE4"
+          echo "============================================"
+
+      - name: Keep Session Alive
+        run: |
+          echo "⏳ Session Active - Keeping alive..."
+          while true; do
+            sleep 60
+            echo "✓ Active - $(date '+%H:%M:%S')"
+          done
