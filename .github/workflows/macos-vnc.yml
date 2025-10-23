@@ -1,0 +1,51 @@
+name: macOS VNC - CLOUDFLARE
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 9999
+
+    steps:
+      - name: Install Cloudflared
+        run: |
+          brew install cloudflare/cloudflare/cloudflared
+          echo "✅ Cloudflared Installed!"
+
+      - name: Enable VNC/Screen Sharing
+        run: |
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers
+          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          echo "✅ VNC Enabled!"
+
+      - name: Set VNC Password
+        run: |
+          echo "P@ssw0rd123!" | /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw P@ssw0rd123!
+          echo "✅ VNC Password Set!"
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          echo "============================================"
+          echo "🚀 macOS VNC - CLOUDFLARE TUNNEL"
+          echo "============================================"
+          echo ""
+          cloudflared tunnel --url tcp://localhost:5900 > tunnel.log 2>&1 &
+          sleep 15
+          cat tunnel.log | grep -o 'https://[^[:space:]]*trycloudflare.com' || echo "Check logs for tunnel URL"
+          echo ""
+          echo "✅ TUNNEL STARTED!"
+          echo ""
+          echo "📋 CONNECTION DETAILS:"
+          echo "   PASSWORD: P@ssw0rd123!"
+          echo "   OS: macOS Monterey/Ventura"
+          echo "   Architecture: $(uname -m)"
+          echo "============================================"
+
+      - name: Keep Session Alive
+        run: |
+          echo "⏳ Session Active - Keeping alive..."
+          while true; do
+            sleep 60
+            echo "✓ Active - $(date '+%H:%M:%S')"
+          done

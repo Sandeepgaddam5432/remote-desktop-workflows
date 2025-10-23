@@ -1,0 +1,51 @@
+name: WINDOWS RDP - CLOUDFLARE
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 9999
+
+    steps:
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Enable Windows RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          Write-Host "✅ RDP Enabled Successfully!"
+
+      - name: Set Administrator Password
+        run: |
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+          Write-Host "✅ Password Configured!"
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          Write-Host "============================================"
+          Write-Host "🚀 WINDOWS RDP - CLOUDFLARE TUNNEL"
+          Write-Host "============================================"
+          Write-Host ""
+          Start-Process PowerShell -ArgumentList '-NoExit -Command "cloudflared tunnel --url tcp://localhost:3389"'
+          Start-Sleep -Seconds 15
+          Write-Host ""
+          Write-Host "✅ TUNNEL STARTED! Check separate PowerShell window for URL"
+          Write-Host ""
+          Write-Host "📋 CONNECTION DETAILS:"
+          Write-Host "   USERNAME: runneradmin"
+          Write-Host "   PASSWORD: P@ssw0rd123!"
+          Write-Host "   OS: Windows Server 2022"
+          Write-Host "   CPU: 4 cores"
+          Write-Host "   RAM: 16GB"
+          Write-Host "============================================"
+
+      - name: Keep Session Alive
+        run: |
+          Write-Host "⏳ Session Active - Keeping alive..."
+          while ($true) {
+            Start-Sleep -Seconds 60
+            Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
+          }
