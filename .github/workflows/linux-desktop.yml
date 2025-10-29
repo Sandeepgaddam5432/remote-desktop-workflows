@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
 
     steps:
       - name: Setup Cloudflared
@@ -16,7 +16,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            xfce4 xfce4-goodies tigervnc-standalone-server autocutsel
+            xfce4 xfce4-session xfwm4 xfce4-terminal tigervnc-standalone-server autocutsel
           echo "✅ XFCE + TigerVNC installed"
 
       - name: Configure TigerVNC
@@ -46,13 +46,23 @@ jobs:
 
       - name: Start TryCloudflare Tunnel (no cert)
         run: |
-          # TryCloudflare quick tunnel without certificates
-          cloudflared tunnel --no-autoupdate --loglevel warn --url tcp://localhost:5901 > tunnel.log 2>&1 &
-          for i in {1..20}; do
+          # TryCloudflare quick tunnel without certificates; strict builds workaround
+          cloudflared tunnel --no-autoupdate --protocol http2 --loglevel error --url tcp://localhost:5901 > tunnel.log 2>&1 &
+          for i in {1..25}; do
             sleep 1
             TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
             if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
           done
+          if [ -z "$TUN" ]; then
+            mkdir -p ~/.cloudflared
+            : > ~/.cloudflared/cert.pem
+            cloudflared tunnel --no-autoupdate --protocol http2 --loglevel error --url tcp://localhost:5901 > tunnel.log 2>&1 &
+            for i in {1..20}; do
+              sleep 1
+              TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
+              if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
+            done
+          fi
           if [ -z "$TUN" ]; then
             echo "❌ Tunnel URL not found"; tail -50 tunnel.log; exit 1
           fi
@@ -67,9 +77,9 @@ jobs:
           echo "Desktop    : XFCE"
           echo "-------------------------------------------"
 
-      - name: Keep alive ~15 minutes
+      - name: Keep alive 6 hours
         run: |
-          for i in {1..15}; do
-            echo "✓ Alive $i/15"
+          for i in {1..360}; do
+            echo "✓ Alive $i/360"
             sleep 60
           done
