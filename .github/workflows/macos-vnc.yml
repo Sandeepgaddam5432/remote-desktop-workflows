@@ -99,42 +99,25 @@ jobs:
           sleep 5
           echo "✅ User session activated"
 
-      - name: Force Desktop Environment (Critical Fix)
+      - name: Force Desktop Environment
         run: |
           set -e
           USER_ID=$(id -u vncuser)
           
-          # Method 1: Launch Finder as user (this creates desktop)
           sudo launchctl asuser "$USER_ID" sudo -u vncuser open -a "Finder"
           sleep 2
           
-          # Method 2: Launch System Preferences (visible window)
-          sudo launchctl asuser "$USER_ID" sudo -u vncuser open -a "System Preferences" || true
+          # System Preferences is now System Settings on newer macOS; ignore if missing
+          sudo launchctl asuser "$USER_ID" sudo -u vncuser open -a "System Settings" || true
           sleep 2
           
-          # Method 3: Force TextEdit with visible window
-          sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript <<'APPLESCRIPT'
-          tell application "TextEdit"
-            activate
-            delay 1
-            make new document
-            set bounds of window 1 to {100, 100, 700, 500}
-            set text of document 1 to "VNC Desktop Active
+          # Create a visible text window
+          sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript -e 'tell application "TextEdit" to activate' || true
+          sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript -e 'tell application "TextEdit" to make new document' || true
+          sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript -e 'tell application "TextEdit" to set text of document 1 to "VNC Desktop Active - Connection Ready"' || true
           
-          Connection Status: ✅ Live
-          User: vncuser
-          
-          This window keeps desktop visible.
-          You can minimize it after connecting.
-          
-          GitHub Actions macOS Runner"
-          end tell
-          APPLESCRIPT
-          
-          # Method 4: Wake displays
           caffeinate -u -t 5 || true
           
-          # Method 5: Trigger screen update
           sudo -u vncuser /usr/bin/osascript -e 'tell application "System Events" to keystroke "a" using {command down}' || true
           
           sleep 3
@@ -187,24 +170,18 @@ jobs:
           
           TUNNEL_URL=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1)
           
-          if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ No tunnel URL found"
+          if [ -z "$TUNNEL_URL" ];n            echo "❌ No tunnel URL found"
             tail -50 tunnel.log
             exit 1
           fi
           
           echo "TUNNEL_URL=$TUNNEL_URL" | tee -a logs/debug.txt
-          echo "tunnel_url=$TUNNEL_URL" >> $GITHUB_OUTPUT
           echo "✅ Tunnel started: $TUNNEL_URL"
 
       - name: Live Diagnostics
         run: |
-          (sudo log stream --predicate 'process == "screensharingd" || process == "ARDAgent"' \
-            --style syslog 2>/dev/null | sed -u 's/^/[VNC-LOG] /' > vnc-live.log &) || true
-          
-          (sudo log stream --process WindowServer --style syslog 2>/dev/null | \
-            sed -u 's/^/[WS] /' > windowserver-live.log &) || true
-          
+          sudo log stream --predicate 'process == "screensharingd" OR process == "ARDAgent"' --style syslog 2>/dev/null | sed -u 's/^/[VNC-LOG] /' > vnc-live.log &
+          sudo log stream --process WindowServer --style syslog 2>/dev/null | sed -u 's/^/[WS] /' > windowserver-live.log &
           echo "✅ Live logging started"
 
       - name: Connection Instructions
@@ -219,10 +196,15 @@ jobs:
           echo "🔑 Password: ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
           echo "👤 Username: vncuser"
           echo ""
+          echo "📱 Connect using:"
+          echo "  - RealVNC Viewer"
+          echo "  - TightVNC"
+          echo "  - macOS Screen Sharing"
+          echo ""
           echo "⚠️  If screen appears black initially:"
-          echo "   Wait 10-15 seconds, TextEdit window will appear"
-          echo "   Press any key or move mouse"
-          echo "   Desktop will fully load within 30 seconds"
+          echo "   Wait 10-15 seconds"
+          echo "   Move mouse or press any key"
+          echo "   Desktop will load within 30 seconds"
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -234,18 +216,15 @@ jobs:
             sleep 60
             echo "✓ Minute $i/360 - Session active"
             
-            # Every 2 minutes: wake display
             if [ $((i % 2)) -eq 0 ]; then
               caffeinate -u -t 2 &
               sudo -u vncuser /usr/bin/osascript -e 'tell application "System Events" to key code 123' 2>/dev/null || true
             fi
             
-            # Every 3 minutes: ensure Finder visible
             if [ $((i % 3)) -eq 0 ]; then
               sudo launchctl asuser "$USER_ID" sudo -u vncuser open -a "Finder" || true
             fi
             
-            # Every 5 minutes: diagnostics
             if [ $((i % 5)) -eq 0 ]; then
               echo "--- Health Check ---"
               ps aux | egrep 'WindowServer|screensharingd|ARDAgent' | grep -v grep || echo "⚠️ Process missing"
@@ -253,26 +232,15 @@ jobs:
               who
             fi
             
-            # Every 10 minutes: refresh desktop
             if [ $((i % 10)) -eq 0 ]; then
-              sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript <<'APPLESCRIPT' || true
-              tell application "Finder"
-                activate
-                delay 0.5
-              end tell
-              tell application "TextEdit"
-                activate
-                delay 0.5
-              end tell
-APPLESCRIPT
+              sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript -e 'tell application "Finder" to activate' || true
+              sleep 1
+              sudo launchctl asuser "$USER_ID" sudo -u vncuser /usr/bin/osascript -e 'tell application "TextEdit" to activate' || true
             fi
             
-            # Every 15 minutes: save logs
             if [ $((i % 15)) -eq 0 ]; then
               cp -f tunnel.log logs/tunnel.log 2>/dev/null || true
-              sudo log show --last 15m --info \
-                --predicate 'process == "screensharingd" || process == "ARDAgent" || process == "WindowServer"' \
-                > logs/system_15m.log 2>/dev/null || true
+              sudo log show --last 15m --info --predicate 'process == "screensharingd" OR process == "ARDAgent" OR process == "WindowServer"' > logs/system_15m.log 2>/dev/null || true
             fi
           done
           
