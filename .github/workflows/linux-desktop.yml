@@ -44,10 +44,11 @@ jobs:
           vncserver :1 -geometry 1366x768 -depth 24 -localhost no
           echo "✅ VNC up on :1 (tcp/5901)"
 
-      - name: Start Cloudflare Tunnel (TCP->5901)
+      - name: Start TryCloudflare Tunnel (no cert)
         run: |
-          cloudflared tunnel --loglevel warn --url tcp://localhost:5901 > tunnel.log 2>&1 &
-          for i in {1..15}; do
+          # TryCloudflare quick tunnel without certificates
+          cloudflared tunnel --no-autoupdate --loglevel warn --url tcp://localhost:5901 > tunnel.log 2>&1 &
+          for i in {1..20}; do
             sleep 1
             TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
             if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
@@ -55,7 +56,7 @@ jobs:
           if [ -z "$TUN" ]; then
             echo "❌ Tunnel URL not found"; tail -50 tunnel.log; exit 1
           fi
-          echo "✅ Tunnel ready"
+          echo "✅ TryCloudflare tunnel ready"
 
       - name: Show Connect Info
         run: |
