@@ -26,6 +26,46 @@ jobs:
           brew install cloudflare/cloudflare/cloudflared
           echo "✅ Cloudflared Installed!"
 
+      - name: Create Dummy User for VNC Access
+        run: |
+          # Create a user that can be logged in for VNC access
+          sudo dscl . -create /Users/vncuser
+          sudo dscl . -create /Users/vncuser UserShell /bin/bash
+          sudo dscl . -create /Users/vncuser RealName "VNC User"
+          sudo dscl . -create /Users/vncuser UniqueID 1001
+          sudo dscl . -create /Users/vncuser PrimaryGroupID 20
+          sudo dscl . -create /Users/vncuser NFSHomeDirectory /Users/vncuser
+          sudo dscl . -passwd /Users/vncuser P@ssw0rd123!
+          
+          # Create home directory
+          sudo mkdir -p /Users/vncuser
+          sudo chown vncuser:staff /Users/vncuser
+          
+          # Add to admin group for full access
+          sudo dscl . -append /Groups/admin GroupMembership vncuser
+          
+          echo "✅ VNC User Created!"
+
+      - name: Configure macOS for VNC Login Screen Access
+        run: |
+          # Disable relaunch apps at login
+          sudo /usr/bin/defaults write /Library/Preferences/com.apple.loginwindow LoginwindowLaunchesRelaunchApps -bool false
+          
+          # Enable VNC for all users including login screen
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers \
+            -clientopts -setvnclegacy -vnclegacy yes
+          
+          # Enable screen sharing at login window
+          sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          
+          # Additional VNC settings for login screen
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCAlwaysStartOnConsole -bool true
+          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          
+          echo "✅ Login Screen VNC Access Configured!"
+
       - name: Enable VNC/Screen Sharing
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers
@@ -46,11 +86,37 @@ jobs:
             -activate -configure -access -on -restart -agent -privs -all \
             -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASSWORD"
           
+          # Additional password configuration for login screen
+          sudo /usr/libexec/PlistBuddy -c "Add :VNCLegacyPasswords array" /Library/Preferences/com.apple.RemoteManagement.plist 2>/dev/null || true
+          sudo /usr/libexec/PlistBuddy -c "Delete :VNCLegacyPasswords:0" /Library/Preferences/com.apple.RemoteManagement.plist 2>/dev/null || true
+          
+          HASH=$(python3 - <<'PY'
+import sys,hashlib
+print(hashlib.md5(b"$PASSWORD").hexdigest())
+PY
+)
+          sudo /usr/libexec/PlistBuddy -c "Add :VNCLegacyPasswords:0 data $(echo $HASH | xxd -r -p | base64)" /Library/Preferences/com.apple.RemoteManagement.plist 2>/dev/null || true
+          
           # Restart screen sharing service
           sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
           
           echo "✅ VNC Password Set: $PASSWORD"
+
+      - name: Auto Login VNC User
+        run: |
+          # Enable automatic login for VNC user
+          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser vncuser
+          
+          # Disable screen lock and sleep
+          sudo pmset -a displaysleep 0
+          sudo pmset -a sleep 0
+          sudo pmset -a disablesleep 1
+          
+          # Login the user via fast user switching
+          sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -switchToUserID 1001
+          
+          echo "✅ VNC User Auto-Login Configured!"
 
       - name: Get System Information
         run: |
@@ -58,7 +124,9 @@ jobs:
           echo "   macOS Version: $(sw_vers -productVersion)"
           echo "   Architecture: $(uname -m)"
           echo "   Hostname: $(hostname)"
-          echo "   IP Address: $(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')"
+          echo "   Current User: $(whoami)"
+          echo "   Logged in Users: $(who)"
+          echo "   VNC Processes: $(ps aux | grep VNC || echo 'None')"
 
       - name: Start Cloudflare Tunnel
         run: |
@@ -89,6 +157,7 @@ jobs:
           echo "   PASSWORD: ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
           echo "   OS: macOS $(sw_vers -productVersion)"
           echo "   Architecture: $(uname -m)"
+          echo "   VNC User: vncuser (should be auto-logged in)"
           echo "============================================"
           echo ""
           echo "🔧 VNC CLIENT SETUP:"
@@ -96,6 +165,7 @@ jobs:
           echo "   2. Use VNC client (RealVNC, TightVNC, etc.)"
           echo "   3. Connect to: [tunnel-url]:5900"
           echo "   4. Enter password when prompted"
+          echo "   5. You should see desktop, not black screen!"
           echo "============================================"
 
       - name: Keep Session Alive
@@ -114,6 +184,13 @@ jobs:
               echo "🔄 Checking tunnel status..."
               if pgrep -f cloudflared > /dev/null; then
                 echo "✅ Tunnel is running"
+                # Check VNC user login status
+                if who | grep vncuser > /dev/null; then
+                  echo "✅ VNC User is logged in"
+                else
+                  echo "⚠️  VNC User not logged in, attempting re-login..."
+                  sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -switchToUserID 1001 2>/dev/null || true
+                fi
               else
                 echo "❌ Tunnel stopped, restarting..."
                 cloudflared tunnel --url tcp://localhost:5900 > tunnel.log 2>&1 &
