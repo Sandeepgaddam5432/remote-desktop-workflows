@@ -9,8 +9,13 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
+      - name: Install Cloudflared Binary (direct)
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
+          cloudflared --version
+          echo "✅ Cloudflared binary installed"
 
       - name: Install XFCE + TigerVNC (lightweight)
         run: |
@@ -44,28 +49,17 @@ jobs:
           vncserver :1 -geometry 1366x768 -depth 24 -localhost no
           echo "✅ VNC up on :1 (tcp/5901)"
 
-      - name: Start TryCloudflare Tunnel (mirror macOS behavior)
+      - name: Start TryCloudflare Quick Tunnel (no cert)
         run: |
-          # Mirror macOS: quick tunnel that prints a trycloudflare URL
-          # Use http2 path; retry; fallback dummy cert for strict builds
-          cloudflared tunnel --no-autoupdate --protocol http2 --loglevel error --url tcp://localhost:5901 > tunnel.log 2>&1 &
+          /usr/local/bin/cloudflared tunnel --url tcp://localhost:5901 > tunnel.log 2>&1 &
           for i in {1..30}; do
-            sleep 1
-            TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
+            sleep 2
+            TUN=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
             if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
+            echo "Waiting for tunnel... $i/30"
           done
           if [ -z "$TUN" ]; then
-            mkdir -p ~/.cloudflared
-            : > ~/.cloudflared/cert.pem
-            cloudflared tunnel --no-autoupdate --protocol http2 --loglevel error --url tcp://localhost:5901 > tunnel.log 2>&1 &
-            for i in {1..20}; do
-              sleep 1
-              TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
-              if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
-            done
-          fi
-          if [ -z "$TUN" ]; then
-            echo "❌ Tunnel URL not found"; tail -100 tunnel.log; exit 1
+            echo "❌ Tunnel failed. Log:"; tail -100 tunnel.log; exit 1
           fi
           echo "$TUN" > tunnel_url.txt
           echo "✅ TryCloudflare tunnel ready"
