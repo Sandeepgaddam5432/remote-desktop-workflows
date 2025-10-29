@@ -27,17 +27,21 @@ jobs:
 
           cat > $HOME/.vnc/xstartup <<'EOF'
           #!/bin/sh
-          xrdb $HOME/.Xresources
+          export PATH=/usr/bin:/usr/sbin
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
           autocutsel -fork
-          startxfce4 &
+          exec startxfce4
           EOF
           chmod +x $HOME/.vnc/xstartup
-          echo "✅ VNC password and xstartup configured"
+          touch $HOME/.Xauthority
+          echo "✅ VNC password and xstartup configured (exec startxfce4)"
 
       - name: Start VNC Server on :1 (5901)
         run: |
           vncserver -kill :1 >/dev/null 2>&1 || true
-          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          vncserver :1 -geometry 1366x768 -depth 24 -localhost no
           echo "✅ VNC up on :1 (tcp/5901)"
 
       - name: Start Cloudflare Tunnel (TCP->5901)
