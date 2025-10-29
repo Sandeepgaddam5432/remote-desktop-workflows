@@ -1,4 +1,4 @@
-name: macOS VNC Desktop - Fixed for GitHub Actions
+name: macOS VNC Desktop - Working Solution
 
 on:
   workflow_dispatch:
@@ -7,10 +7,6 @@ on:
         description: 'VNC Password'
         required: false
         default: 'P@ssw0rd123!'
-  push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/macos-vnc.yml'
 
 jobs:
   macos-desktop:
@@ -21,99 +17,145 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: System Setup
+      - name: System Info
         run: |
-          set -x
           mkdir -p logs
           sw_vers | tee logs/system.txt
           whoami | tee -a logs/system.txt
-          id | tee -a logs/system.txt
-          echo "✅ System info captured"
+          echo "✅ System ready"
 
       - name: Install Cloudflared
         run: |
           brew install cloudflare/cloudflare/cloudflared
           cloudflared --version
 
-      - name: Configure VNC for Current User
+      - name: Stop Existing VNC Services
+        run: |
+          sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          sudo pkill -9 screensharingd 2>/dev/null || true
+          sudo pkill -9 ARDAgent 2>/dev/null || true
+          sleep 2
+          echo "✅ Old services stopped"
+
+      - name: Configure VNC with Force Start
         run: |
           PASSWORD="${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
           
-          # Enable Remote Management for current runner user
+          # Full kickstart with all options
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -restart -agent -privs -all \
-            -allowAccessFor -specifiedUsers
+            -activate \
+            -configure \
+            -access -on \
+            -restart \
+            -agent \
+            -privs -all \
+            -allowAccessFor -specifiedUsers \
+            -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASSWORD"
           
+          # Add runner user explicitly
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -users runner -access -on -privs -all
           
-          # Set VNC password for runner user
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASSWORD"
-          
-          # Enable console access
+          # Critical: Force console mode
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
             VNCAlwaysStartOnConsole -bool true
           
-          # Restart services
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
+            LoadRemoteManagementMenuExtra -bool true
+          
+          sleep 2
+          echo "✅ VNC configured"
+
+      - name: Force Load Screen Sharing Service
+        run: |
+          # Method 1: Direct launchctl load
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || {
+            echo "⚠️ Standard load failed, trying bootstrap..."
+            sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          }
           
           sleep 3
-          echo "✅ VNC configured for runner user"
+          
+          # Method 2: Kickstart the service
+          sudo launchctl kickstart -k system/com.apple.screensharing || true
+          
+          sleep 2
+          
+          # Method 3: Start ARDAgent explicitly
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -restart -agent -console
+          
+          sleep 3
+          
+          echo "✅ Services loaded"
 
-      - name: Disable Sleep and Lock
+      - name: Verify and Force VNC Port
+        run: |
+          echo "=== Checking VNC Port 5900 ==="
+          
+          # Try up to 5 times
+          for attempt in {1..5}; do
+            echo "Attempt $attempt/5..."
+            
+            if lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
+              echo "✅ VNC listening on port 5900"
+              lsof -nP -iTCP:5900 -sTCP:LISTEN
+              break
+            fi
+            
+            echo "⚠️ Port 5900 not ready, forcing restart..."
+            
+            # Force restart with different methods
+            if [ $attempt -eq 1 ]; then
+              sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent -console
+            elif [ $attempt -eq 2 ]; then
+              sudo launchctl kickstart -kp system/com.apple.screensharing
+            elif [ $attempt -eq 3 ]; then
+              sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+              sleep 1
+              sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            elif [ $attempt -eq 4 ]; then
+              sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -stop
+              sleep 2
+              sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -restart -agent -console
+            fi
+            
+            sleep 5
+          done
+          
+          # Final check
+          if ! lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "❌ Failed to start VNC on port 5900"
+            echo "=== Process Status ==="
+            ps aux | grep -E 'screensharing|ARDAgent' | grep -v grep || echo "No VNC processes"
+            echo "=== Launchctl list ==="
+            sudo launchctl list | grep -i screen || echo "No screen sharing service"
+            exit 1
+          fi
+          
+          echo "✅ VNC service verified"
+
+      - name: Disable Power Management
         run: |
           sudo pmset -a sleep 0 displaysleep 0 disablesleep 1
           sudo defaults write /Library/Preferences/com.apple.screensaver askForPassword -int 0
-          echo "✅ Power settings configured"
+          echo "✅ Power management disabled"
 
-      - name: Create GUI Session Bootstrap
+      - name: Initialize GUI Session
         run: |
-          # Create a LaunchAgent to ensure GUI session exists
-          mkdir -p ~/Library/LaunchAgents
-          
-          cat > ~/Library/LaunchAgents/com.github.keepalive.plist <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>Label</key>
-            <string>com.github.keepalive</string>
-            <key>ProgramArguments</key>
-            <array>
-              <string>/bin/bash</string>
-              <string>-c</string>
-              <string>while true; do sleep 60; done</string>
-            </array>
-            <key>RunAtLoad</key>
-            <true/>
-            <key>KeepAlive</key>
-            <true/>
-          </dict>
-          </plist>
-          EOF
-          
-          launchctl load ~/Library/LaunchAgents/com.github.keepalive.plist || true
-          echo "✅ LaunchAgent created"
-
-      - name: Force Aqua GUI Session
-        run: |
-          # Method 1: Use bootstrap to create proper GUI session
-          sudo launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.keepalive.plist 2>/dev/null || true
-          
-          # Method 2: Start WindowServer if not running
+          # Ensure WindowServer is running
           if ! pgrep -x "WindowServer" > /dev/null; then
             sudo launchctl kickstart -k system/com.apple.WindowServer
             sleep 5
           fi
           
-          # Method 3: Trigger Aqua session via loginwindow
+          # Kickstart loginwindow for full GUI
           sudo launchctl kickstart -k system/com.apple.loginwindow
           sleep 3
           
-          echo "✅ GUI session initialized"
+          echo "✅ GUI initialized"
 
-      - name: Launch Desktop Applications
+      - name: Launch Desktop Apps
         run: |
           # Wait for WindowServer
           for i in {1..10}; do
@@ -121,32 +163,35 @@ jobs:
               echo "✅ WindowServer running"
               break
             fi
-            echo "Waiting for WindowServer... attempt $i"
+            echo "Waiting for WindowServer... $i/10"
             sleep 2
           done
           
-          # Launch apps directly (no launchctl asuser needed)
+          # Launch Finder
           open -a Finder &
           sleep 2
           
+          # Launch TextEdit with visible window
           open -a TextEdit &
           sleep 2
           
-          # Create a visible window using osascript
+          # Create welcome message
           /usr/bin/osascript <<'APPLESCRIPT' &
           try
             tell application "TextEdit"
               activate
               delay 1
               make new document
-              set text of document 1 to "🖥️ VNC Desktop Active
+              set text of document 1 to "🖥️ macOS VNC Desktop - GitHub Actions
           
-          ✅ Connection Ready
+          ✅ Connection Status: ACTIVE
           👤 User: runner
-          🔑 Password: Use provided VNC password
+          🔑 Password: Check connection info below
           
-          This window confirms desktop is visible.
-          GitHub Actions macOS Runner"
+          📱 This desktop is running on a GitHub Actions macOS runner.
+          You can use Finder, Terminal, and other apps normally.
+          
+          ⏰ Session will remain active for 6 hours."
             end tell
           end try
           APPLESCRIPT
@@ -154,46 +199,16 @@ jobs:
           sleep 3
           echo "✅ Desktop apps launched"
 
-      - name: Verify VNC Service
-        run: |
-          echo "=== VNC Service Status ==="
-          
-          # Check screensharingd process
-          if pgrep -x "screensharingd" > /dev/null; then
-            echo "✅ screensharingd running"
-            ps aux | grep screensharingd | grep -v grep
-          else
-            echo "⚠️ screensharingd not running, starting..."
-            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent
-            sleep 3
-          fi
-          
-          # Check port 5900
-          if lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
-            echo "✅ VNC listening on port 5900"
-            lsof -nP -iTCP:5900 -sTCP:LISTEN
-          else
-            echo "❌ VNC not on port 5900"
-            exit 1
-          fi
-          
-          # Check WindowServer
-          if pgrep -x "WindowServer" > /dev/null; then
-            echo "✅ WindowServer running"
-          else
-            echo "⚠️ WindowServer not running"
-          fi
-
       - name: Start Cloudflare Tunnel
         run: |
           cloudflared tunnel --url tcp://localhost:5900 > tunnel.log 2>&1 &
           TUNNEL_PID=$!
-          
           echo "Tunnel PID: $TUNNEL_PID"
+          
           sleep 20
           
           if ! kill -0 $TUNNEL_PID 2>/dev/null; then
-            echo "❌ Tunnel failed"
+            echo "❌ Tunnel failed to start"
             cat tunnel.log
             exit 1
           fi
@@ -206,66 +221,74 @@ jobs:
             exit 1
           fi
           
-          echo "tunnel_url=$TUNNEL_URL" >> $GITHUB_OUTPUT
-          echo "TUNNEL_URL=$TUNNEL_URL" > logs/tunnel_url.txt
-          echo "✅ Tunnel started: $TUNNEL_URL"
+          echo "TUNNEL_URL=$TUNNEL_URL" | tee logs/tunnel_url.txt
+          echo "✅ Tunnel active: $TUNNEL_URL"
 
-      - name: Display Connection Info
+      - name: Display Connection Instructions
         run: |
           TUNNEL_URL=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1)
+          VNC_HOST="${TUNNEL_URL#https://}"
           
-          echo "╔═══════════════════════════════════════════════════╗"
-          echo "║        🖥️  VNC CONNECTION READY                   ║"
-          echo "╚═══════════════════════════════════════════════════╝"
           echo ""
-          echo "📡 VNC Address: ${TUNNEL_URL#https://}:5900"
-          echo "🔑 Password: ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
-          echo "👤 Username: runner"
+          echo "╔════════════════════════════════════════════════════════╗"
+          echo "║                                                        ║"
+          echo "║          🖥️  macOS VNC DESKTOP READY                  ║"
+          echo "║                                                        ║"
+          echo "╚════════════════════════════════════════════════════════╝"
           echo ""
-          echo "📱 Recommended VNC Clients:"
-          echo "   • RealVNC Viewer"
-          echo "   • TightVNC"
-          echo "   • macOS Screen Sharing (Finder → Go → Connect to Server)"
+          echo "  📡 VNC Server:  $VNC_HOST:5900"
+          echo "  🔑 Password:    ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
+          echo "  👤 Username:    runner"
           echo ""
-          echo "⏰ Session will stay active for 6 hours"
+          echo "  📱 Recommended VNC Clients:"
+          echo "     • RealVNC Viewer      (https://www.realvnc.com/download/viewer/)"
+          echo "     • TightVNC            (https://www.tightvnc.com/download.php)"
+          echo "     • macOS Screen Sharing (Finder → Go → Connect to Server)"
           echo ""
-          echo "╚═══════════════════════════════════════════════════╝"
+          echo "  ⏰ Session Duration: 6 hours (auto-disconnect after timeout)"
+          echo ""
+          echo "  💡 Connection Tips:"
+          echo "     - If black screen appears, wait 10-15 seconds"
+          echo "     - Move mouse to wake display"
+          echo "     - TextEdit window should be visible on desktop"
+          echo ""
+          echo "╚════════════════════════════════════════════════════════╝"
+          echo ""
 
-      - name: Keep Session Alive
+      - name: Keep Session Active
         run: |
           for i in {1..360}; do
             sleep 60
-            echo "✓ Minute $i/360 - Session active"
+            echo "✓ Minute $i/360"
             
-            # Every 3 minutes: health check
+            # Every 3 minutes: Health check
             if [ $((i % 3)) -eq 0 ]; then
-              echo "--- Health Check ---"
-              pgrep -x "WindowServer" > /dev/null && echo "✅ WindowServer OK" || echo "⚠️ WindowServer down"
-              pgrep -x "screensharingd" > /dev/null && echo "✅ VNC OK" || echo "⚠️ VNC down"
-              lsof -nP -iTCP:5900 -sTCP:LISTEN > /dev/null && echo "✅ Port 5900 OK" || echo "⚠️ Port issue"
+              pgrep -x "WindowServer" > /dev/null && echo "  ✅ WindowServer OK" || echo "  ⚠️ WindowServer down"
+              pgrep -x "screensharingd" > /dev/null && echo "  ✅ VNC OK" || echo "  ⚠️ VNC down"
+              lsof -nP -iTCP:5900 -sTCP:LISTEN > /dev/null 2>&1 && echo "  ✅ Port 5900 OK" || echo "  ⚠️ Port issue"
             fi
             
-            # Every 5 minutes: wake display
+            # Every 5 minutes: Wake display
             if [ $((i % 5)) -eq 0 ]; then
               caffeinate -u -t 2 &
             fi
             
-            # Every 10 minutes: refresh desktop
+            # Every 10 minutes: Refresh desktop
             if [ $((i % 10)) -eq 0 ]; then
               open -a Finder &
-              /usr/bin/osascript -e 'tell application "System Events" to keystroke tab' || true
+              /usr/bin/osascript -e 'tell application "System Events" to keystroke tab' 2>/dev/null || true
             fi
             
-            # Every 15 minutes: save logs
+            # Every 15 minutes: Save logs
             if [ $((i % 15)) -eq 0 ]; then
               cp tunnel.log logs/ 2>/dev/null || true
-              ps aux | grep -E 'WindowServer|screensharingd|ARDAgent' | grep -v grep > logs/processes.txt || true
+              ps aux | grep -E 'WindowServer|screensharing|ARDAgent' | grep -v grep > logs/processes_$i.txt 2>/dev/null || true
             fi
           done
           
-          echo "⏰ 6 hour timeout reached"
+          echo "⏰ Session timeout reached (6 hours)"
 
-      - name: Upload Debug Logs
+      - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
