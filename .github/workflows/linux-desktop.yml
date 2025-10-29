@@ -44,11 +44,12 @@ jobs:
           vncserver :1 -geometry 1366x768 -depth 24 -localhost no
           echo "✅ VNC up on :1 (tcp/5901)"
 
-      - name: Start TryCloudflare Tunnel (no cert)
+      - name: Start TryCloudflare Tunnel (mirror macOS behavior)
         run: |
-          # TryCloudflare quick tunnel without certificates; strict builds workaround
+          # Mirror macOS: quick tunnel that prints a trycloudflare URL
+          # Use http2 path; retry; fallback dummy cert for strict builds
           cloudflared tunnel --no-autoupdate --protocol http2 --loglevel error --url tcp://localhost:5901 > tunnel.log 2>&1 &
-          for i in {1..25}; do
+          for i in {1..30}; do
             sleep 1
             TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1 || true)
             if [ -n "$TUN" ]; then echo "🌐 $TUN"; break; fi
@@ -64,17 +65,19 @@ jobs:
             done
           fi
           if [ -z "$TUN" ]; then
-            echo "❌ Tunnel URL not found"; tail -50 tunnel.log; exit 1
+            echo "❌ Tunnel URL not found"; tail -100 tunnel.log; exit 1
           fi
+          echo "$TUN" > tunnel_url.txt
           echo "✅ TryCloudflare tunnel ready"
 
-      - name: Show Connect Info
+      - name: Show Connect Info (+ local access cmd)
         run: |
-          TUN=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1)
+          TUN=$(cat tunnel_url.txt)
           echo "-------------------------------------------"
-          echo "VNC Address: ${TUN#https://}:5901"
-          echo "Password   : P@ssw0rd123!"
-          echo "Desktop    : XFCE"
+          echo "VNC Address (direct): ${TUN#https://}:5901"
+          echo "Local proxy command : cloudflared access tcp --hostname ${TUN#https://} --url localhost:5901"
+          echo "Password            : P@ssw0rd123!"
+          echo "Desktop             : XFCE"
           echo "-------------------------------------------"
 
       - name: Keep alive 6 hours
