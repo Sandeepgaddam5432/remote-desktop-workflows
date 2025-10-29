@@ -28,7 +28,7 @@ jobs:
       - name: Enable Extended Logging
         run: |
           set -x
-          sudo syslog -c 0
+          sudo syslog -c 0 || true
           sudo log config --mode "level:debug" || true
           mkdir -p logs
           echo "✅ Debug logging enabled"
@@ -40,7 +40,7 @@ jobs:
           uname -a | tee -a logs/debug.txt
           id | tee -a logs/debug.txt
           who | tee -a logs/debug.txt || true
-          ps aux | grep -E 'VNC|ARDAgent|screensharing' | tee -a logs/debug.txt || true
+          ps aux | egrep 'WindowServer|screensharingd|ARDAgent' | tee -a logs/debug.txt || true
           echo "======================" | tee -a logs/debug.txt
 
       - name: Install Cloudflared
@@ -59,7 +59,7 @@ jobs:
         run: |
           PASSWORD="${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
           
-          # Enable Remote Management and VNC legacy
+          # Enable Remote Management and VNC legacy with password
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers \
             -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$PASSWORD"
@@ -98,6 +98,44 @@ jobs:
 
           echo "✅ User session initialized"
 
+      - name: Force GUI on user session
+        run: |
+          set -e
+          U_ID=$(id -u vncuser)
+          sudo /System/Library/CoreServices/Menu\ Extras/User.menu/Contents/Resources/CGSession -switchToUserID "$U_ID" || true
+          sleep 3
+          sudo launchctl asuser "$U_ID" sudo -u vncuser open -a "Finder" || true
+          sudo launchctl asuser "$U_ID" sudo -u vncuser open -a "TextEdit" || true
+          /usr/bin/osascript <<'APPLES'
+          tell application "System Events"
+            try
+              tell application "TextEdit"
+                activate
+                delay 1
+                make new document
+                set the text of front document to "VNC test visible window"
+              end tell
+            end try
+          end tell
+          APPLES
+          echo "✅ Forced GUI apps launched"
+
+      - name: Verify VNC port and heal if needed
+        run: |
+          if ! lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "⚠️ VNC not listening on 5900, restarting services..."
+            sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+              -activate -configure -access -on -restart -agent -privs -all -allowAccessFor -allUsers \
+              -clientopts -setvnclegacy -vnclegacy yes
+            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist
+            sleep 3
+            lsof -nP -iTCP:5900 -sTCP:LISTEN || true
+          else
+            echo "✅ VNC listening on 5900"
+            lsof -nP -iTCP:5900 -sTCP:LISTEN || true
+          fi
+
       - name: Diagnostics - VNC and WindowServer
         run: |
           echo "==== SERVICES ====" | tee -a logs/debug.txt
@@ -124,8 +162,6 @@ jobs:
           LOG_SRC="/Library/Logs/RemoteManagement/" 
           echo "RemoteManagement logs:" | tee -a logs/debug.txt
           ls -l "$LOG_SRC" 2>/dev/null | tee -a logs/debug.txt || true
-          
-          # Background tail for ARD and system logs
           (sudo log stream --predicate 'process == "screensharingd" || process == "ARDAgent"' --style syslog | sed -u 's/^/[VNC-LOG] /' > vnc-live.log &) || true
           (sudo log stream --process WindowServer --style syslog | sed -u 's/^/[WS] /' > windowserver-live.log &) || true
           echo "✅ Live log capture started"
@@ -135,22 +171,24 @@ jobs:
           echo "============================================"
           echo "Connect with VNC Viewer to: [tunnel-url]:5900"
           echo "Password: ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
-          echo "If screen is black, leave session connected for 1-2 minutes while logs are captured."
+          echo "If screen is black, stay connected for ~60s. Desktop will be forced alive."
           echo "============================================"
 
-      - name: Keep Session Active (with periodic dumps)
+      - name: Keep Session Active (with GUI nudge)
         run: |
           for i in {1..360}; do
             sleep 60
             echo "✓ Minute $i/360"
+            if [ $((i % 3)) -eq 0 ]; then
+              /usr/bin/osascript -e 'tell application "System Events" to key code 123' 2>/dev/null || true
+              /usr/bin/osascript -e 'tell application "System Events" to key code 124' 2>/dev/null || true
+            fi
             if [ $((i % 5)) -eq 0 ]; then
-              echo "--- STATUS DUMP minute $i ---"
               who || true
               ps aux | egrep 'WindowServer|screensharingd|ARDAgent' || true
               lsof -nP -iTCP:5900 -sTCP:LISTEN || true
             fi
             if [ $((i % 15)) -eq 0 ]; then
-              echo "--- Saving logs snapshot ---"
               cp -f tunnel.log logs/tunnel.log || true
               sudo log show --last 15m --info --predicate 'process == "screensharingd" || process == "ARDAgent" || process == "WindowServer"' > logs/system_15m.log 2>/dev/null || true
             fi
