@@ -29,22 +29,76 @@ jobs:
           Write-Host "🚀 WINDOWS RDP - CLOUDFLARE TUNNEL"
           Write-Host "============================================"
           Write-Host ""
-          Start-Process PowerShell -ArgumentList '-NoExit -Command "cloudflared tunnel --url tcp://localhost:3389"'
-          Start-Sleep -Seconds 15
+          Write-Host "⏳ Starting Cloudflare tunnel..."
           Write-Host ""
-          Write-Host "✅ TUNNEL STARTED! Check separate PowerShell window for URL"
-          Write-Host ""
-          Write-Host "📋 CONNECTION DETAILS:"
-          Write-Host "   USERNAME: runneradmin"
-          Write-Host "   PASSWORD: P@ssw0rd123!"
-          Write-Host "   OS: Windows Server 2022"
-          Write-Host "   CPU: 4 cores"
-          Write-Host "   RAM: 16GB"
-          Write-Host "============================================"
+          
+          # Start cloudflared and capture output
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389" -NoNewWindow -PassThru -RedirectStandardOutput "tunnel-output.txt" -RedirectStandardError "tunnel-error.txt"
+          
+          # Wait for tunnel URL to be generated
+          Write-Host "⏳ Waiting for tunnel URL..."
+          Start-Sleep -Seconds 10
+          
+          # Read and display tunnel URL
+          $maxAttempts = 20
+          $attempt = 0
+          $urlFound = $false
+          
+          while (-not $urlFound -and $attempt -lt $maxAttempts) {
+              if (Test-Path "tunnel-output.txt") {
+                  $output = Get-Content "tunnel-output.txt" -Raw
+                  if ($output -match "https://[a-z0-9-]+\.trycloudflare\.com") {
+                      $tunnelUrl = $matches[0]
+                      $urlFound = $true
+                      
+                      Write-Host ""
+                      Write-Host "============================================"
+                      Write-Host "✅ TUNNEL URL READY!"
+                      Write-Host "============================================"
+                      Write-Host ""
+                      Write-Host "🔗 TUNNEL URL:"
+                      Write-Host "   $tunnelUrl"
+                      Write-Host ""
+                      Write-Host "📋 CONNECTION DETAILS:"
+                      Write-Host "   USERNAME: runneradmin"
+                      Write-Host "   PASSWORD: P@ssw0rd123!"
+                      Write-Host "   OS: Windows Server 2022"
+                      Write-Host "   CPU: 4 cores"
+                      Write-Host "   RAM: 16GB"
+                      Write-Host ""
+                      Write-Host "📝 HOW TO CONNECT:"
+                      Write-Host "   1. On your PC, run:"
+                      Write-Host "      cloudflared access tcp --hostname $tunnelUrl --url localhost:3389"
+                      Write-Host ""
+                      Write-Host "   2. Open Remote Desktop and connect to: localhost:3389"
+                      Write-Host "============================================"
+                      Write-Host ""
+                  }
+              }
+              
+              if (-not $urlFound) {
+                  Start-Sleep -Seconds 2
+                  $attempt++
+              }
+          }
+          
+          if (-not $urlFound) {
+              Write-Host "⚠️ Could not detect tunnel URL automatically"
+              Write-Host "📋 Tunnel output:"
+              if (Test-Path "tunnel-output.txt") {
+                  Get-Content "tunnel-output.txt"
+              }
+              if (Test-Path "tunnel-error.txt") {
+                  Write-Host "📋 Error output:"
+                  Get-Content "tunnel-error.txt"
+              }
+          }
 
       - name: Keep Session Alive
         run: |
           Write-Host "⏳ Session Active - Keeping alive..."
+          Write-Host "💡 TIP: The tunnel URL is displayed above. Scroll up to find it!"
+          Write-Host ""
           while ($true) {
             Start-Sleep -Seconds 60
             Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
