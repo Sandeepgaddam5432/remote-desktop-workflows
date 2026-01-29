@@ -1,11 +1,11 @@
-name: WINDOWS RDP - CLOUDFLARE V2
+name: WINDOWS RDP - CLOUDFLAREv2
 on:
   workflow_dispatch
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360  # 6 Hours Max
+    timeout-minutes: 360
 
     steps:
       - name: Setup Cloudflared
@@ -23,64 +23,51 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
           Write-Host "✅ Password Configured!"
 
-      - name: Start Cloudflare Tunnel
+      - name: Start & Keep Tunnel Alive
         run: |
-          Write-Host "============================================"
-          Write-Host "🚀 WINDOWS RDP - CLOUDFLARE TUNNEL"
-          Write-Host "============================================"
+          Write-Host "🚀 Starting Cloudflare Tunnel..."
           
-          # Start cloudflared with no-autoupdate to prevent crashes
-          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate" -NoNewWindow -PassThru -RedirectStandardOutput "tunnel-output.txt" -RedirectStandardError "tunnel-error.txt"
+          # Start cloudflared in background but keep handle in this session
+          $argumentList = "tunnel --url tcp://localhost:3389 --no-autoupdate --logfile tunnel.log --metrics localhost:45678"
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList $argumentList -PassThru -NoNewWindow
           
-          Write-Host "⏳ Waiting for tunnel URL..."
-          Start-Sleep -Seconds 10
-          
-          $maxAttempts = 30
-          $attempt = 0
+          Write-Host "⏳ Waiting for Tunnel URL..."
           $urlFound = $false
+          $attempts = 0
           
-          while (-not $urlFound -and $attempt -lt $maxAttempts) {
-              # Check both output and error files because cloudflared is weird
-              if (Test-Path "tunnel-output.txt") { $output = Get-Content "tunnel-output.txt" -Raw }
-              if (Test-Path "tunnel-error.txt") { $errorOutput = Get-Content "tunnel-error.txt" -Raw }
-              
-              $combinedLogs = "$output $errorOutput"
-              
-              if ($combinedLogs -match "https://[a-z0-9-]+\.trycloudflare\.com") {
-                  $tunnelUrl = $matches[0]
-                  $urlFound = $true
-                  
-                  Write-Host ""
-                  Write-Host "✅ TUNNEL URL READY!"
-                  Write-Host "🔗 TUNNEL URL: $tunnelUrl"
-                  Write-Host "📋 USERNAME: runneradmin"
-                  Write-Host "📋 PASSWORD: P@ssw0rd123!"
-                  Write-Host ""
-              } else {
-                  Start-Sleep -Seconds 2
-                  $attempt++
+          # Loop to find URL in log file
+          while ($attempts -lt 30) {
+              Start-Sleep -Seconds 2
+              if (Test-Path "tunnel.log") {
+                  $logContent = Get-Content "tunnel.log" -Raw
+                  if ($logContent -match "https://[a-z0-9-]+\.trycloudflare\.com") {
+                      $tunnelUrl = $matches[0]
+                      $urlFound = $true
+                      break
+                  }
               }
-          }
-          
-          if (-not $urlFound) {
-              Write-Host "❌ Failed to get URL. Showing logs:"
-              Get-Content "tunnel-output.txt"
-              Get-Content "tunnel-error.txt"
-              exit 1
+              $attempts++
           }
 
-      - name: Keep Session Alive & Monitor
-        run: |
-          Write-Host "⏳ Monitoring Cloudflare Tunnel Status..."
-          while ($true) {
-            # Check if cloudflared process is actually running
-            $cfProcess = Get-Process cloudflared -ErrorAction SilentlyContinue
-            
-            if ($cfProcess) {
-              Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
-              Start-Sleep -Seconds 10
-            } else {
-              Write-Host "❌ Cloudflare Tunnel Crashed/Stopped!"
+          if ($urlFound) {
+              Write-Host ""
+              Write-Host "============================================"
+              Write-Host "✅ TUNNEL URL READY!"
+              Write-Host "🔗 $tunnelUrl"
+              Write-Host "============================================"
+              Write-Host "📋 USERNAME: runneradmin"
+              Write-Host "📋 PASSWORD: P@ssw0rd123!"
+              Write-Host ""
+              Write-Host "🏃 KEEPING SESSION ALIVE..."
+              
+              # Monitor process explicitly
+              while (!$process.HasExited) {
+                  Start-Sleep -Seconds 10
+                  Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
+              }
+              Write-Host "❌ Cloudflared process exited unexpectedly!"
+          } else {
+              Write-Host "❌ Failed to find URL. Logs:"
+              if (Test-Path "tunnel.log") { Get-Content "tunnel.log" }
               exit 1
-            }
           }
