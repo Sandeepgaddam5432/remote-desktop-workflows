@@ -1,4 +1,4 @@
-name: WINDOWS RDP - CLOUDFLARE
+name: WINDOWS RDP - CLOUDFLARE V2
 on:
   workflow_dispatch
 
