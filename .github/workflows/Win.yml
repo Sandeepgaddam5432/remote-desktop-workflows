@@ -1,0 +1,86 @@
+name: WINDOWS RDP - CLOUDFLARE
+on:
+  workflow_dispatch
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360  # 6 Hours Max
+
+    steps:
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Enable Windows RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          Write-Host "✅ RDP Enabled Successfully!"
+
+      - name: Set Administrator Password
+        run: |
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+          Write-Host "✅ Password Configured!"
+
+      - name: Start Cloudflare Tunnel
+        run: |
+          Write-Host "============================================"
+          Write-Host "🚀 WINDOWS RDP - CLOUDFLARE TUNNEL"
+          Write-Host "============================================"
+          
+          # Start cloudflared with no-autoupdate to prevent crashes
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate" -NoNewWindow -PassThru -RedirectStandardOutput "tunnel-output.txt" -RedirectStandardError "tunnel-error.txt"
+          
+          Write-Host "⏳ Waiting for tunnel URL..."
+          Start-Sleep -Seconds 10
+          
+          $maxAttempts = 30
+          $attempt = 0
+          $urlFound = $false
+          
+          while (-not $urlFound -and $attempt -lt $maxAttempts) {
+              # Check both output and error files because cloudflared is weird
+              if (Test-Path "tunnel-output.txt") { $output = Get-Content "tunnel-output.txt" -Raw }
+              if (Test-Path "tunnel-error.txt") { $errorOutput = Get-Content "tunnel-error.txt" -Raw }
+              
+              $combinedLogs = "$output $errorOutput"
+              
+              if ($combinedLogs -match "https://[a-z0-9-]+\.trycloudflare\.com") {
+                  $tunnelUrl = $matches[0]
+                  $urlFound = $true
+                  
+                  Write-Host ""
+                  Write-Host "✅ TUNNEL URL READY!"
+                  Write-Host "🔗 TUNNEL URL: $tunnelUrl"
+                  Write-Host "📋 USERNAME: runneradmin"
+                  Write-Host "📋 PASSWORD: P@ssw0rd123!"
+                  Write-Host ""
+              } else {
+                  Start-Sleep -Seconds 2
+                  $attempt++
+              }
+          }
+          
+          if (-not $urlFound) {
+              Write-Host "❌ Failed to get URL. Showing logs:"
+              Get-Content "tunnel-output.txt"
+              Get-Content "tunnel-error.txt"
+              exit 1
+          }
+
+      - name: Keep Session Alive & Monitor
+        run: |
+          Write-Host "⏳ Monitoring Cloudflare Tunnel Status..."
+          while ($true) {
+            # Check if cloudflared process is actually running
+            $cfProcess = Get-Process cloudflared -ErrorAction SilentlyContinue
+            
+            if ($cfProcess) {
+              Write-Host "✓ Active - $(Get-Date -Format 'HH:mm:ss')"
+              Start-Sleep -Seconds 10
+            } else {
+              Write-Host "❌ Cloudflare Tunnel Crashed/Stopped!"
+              exit 1
+            }
+          }
