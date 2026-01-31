@@ -1,4 +1,25 @@
-- name: 🛠️ Install Tools (Antigravity, SandSneha, OpenVPN)
+name: ULTIMATE WINDOWS WORKSTATION
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Enable Windows RDP
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
+          Write-Host "✅ RDP & User Configured!"
+
+      - name: 🛠️ Install Tools (Antigravity, SandSneha, OpenVPN)
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
@@ -6,31 +27,30 @@
           choco install openvpn -y
           
           Write-Host "⬇️ Downloading & Installing Google Antigravity..."
-          $AntigravityPath = "$env:USERPROFILE\Desktop\Antigravity.exe"
-          Invoke-WebRequest -Uri "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/windows-x64/Antigravity.exe" -OutFile $AntigravityPath
-          
-          # Try to run it silently (if it supports silent install) or just leave on Desktop
-          Write-Host "🚀 Launching Antigravity Installer..."
-          Start-Process -FilePath $AntigravityPath -ArgumentList "/S" -PassThru
+          $AntiGravURL = "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/windows-x64/Antigravity.exe"
+          Invoke-WebRequest -Uri $AntiGravURL -OutFile "AntigravityInstaller.exe"
+          # Installing silently
+          Start-Process -FilePath "AntigravityInstaller.exe" -ArgumentList "/S" -Wait -PassThru
+          Write-Host "✅ Antigravity Installed!"
           
           Write-Host "⬇️ Downloading SandSneha App..."
-          # Replace this URL with your GitHub Release Link
-          $SandLink = "PASTE_YOUR_GITHUB_RELEASE_LINK_HERE" 
-          Invoke-WebRequest -Uri $SandLink -OutFile "SandSneha.zip"
+          # Using your new bit.ly link (Make sure it redirects to direct download)
+          Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 10
           
           Write-Host "🔓 Extracting with Password..."
           & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"C:\SandSnehaApp" -y
           
+          # Creating Shortcut for SandSneha
+          $WshShell = New-Object -comObject WScript.Shell
           $ExePath = "C:\SandSnehaApp\SandSneha\SandSneha.exe"
           if (Test-Path $ExePath) {
-              $WshShell = New-Object -comObject WScript.Shell
               $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SandSneha.lnk")
               $Shortcut.TargetPath = $ExePath
               $Shortcut.Save()
-              Write-Host "✅ SandSneha Installed!"
+              Write-Host "✅ SandSneha Shortcut Created!"
           }
 
-      - name: 🤖 Setup SMART BACKUP System
+      - name: 🤖 Setup SMART BACKUP System (Fixed Logic)
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -63,7 +83,7 @@
                   Set-Location `$NewFolderPath
                   
                   # FIX: Create a dummy file so Git has something to commit
-                  "Project: `$NewFolderName - Auto Backup" | Out-File "README.md"
+                  "Backup created on $(Get-Date)" | Out-File "README.md"
                   
                   git init
                   git add .
@@ -72,11 +92,44 @@
                   Write-Host "☁️ Creating GitHub Repo..."
                   echo $env:GH_TOKEN | gh auth login --with-token
                   
-                  # Create repo and push immediately
+                  # Create Private Repo and Push
                   gh repo create "`$NewFolderName" --private --source=. --remote=origin --push
                   
                   Write-Host "✅ Uploaded Successfully!"
               }
           }
           "@
+          
           $ScriptContent | Out-File "C:\MonitorBackups.ps1"
+
+      - name: 🚀 Start Tunnel & Monitor Backups
+        run: |
+          # Start Cloudflare Tunnel
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log" -PassThru -NoNewWindow
+          
+          # Start Backup Monitor in Background
+          Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File C:\MonitorBackups.ps1" -WindowStyle Minimized
+          
+          Write-Host "⏳ Waiting for Tunnel URL..."
+          Start-Sleep -Seconds 10
+          
+          $urlFound = $false
+          $attempts = 0
+          while ($attempts -lt 30) {
+              if (Test-Path "tunnel.log") {
+                  $log = Get-Content "tunnel.log" -Raw
+                  if ($log -match "https://[a-z0-9-]+\\.trycloudflare\\.com") {
+                      Write-Host "✅ TUNNEL URL: $($matches[0])"
+                      $urlFound = $true
+                      break
+                  }
+              }
+              Start-Sleep -Seconds 2
+              $attempts++
+          }
+          
+          if ($urlFound) {
+              while (!$process.HasExited) { Start-Sleep -Seconds 10; Write-Host "✓ Active" }
+          } else {
+              exit 1
+          }
