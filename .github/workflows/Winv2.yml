@@ -19,7 +19,7 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
           Write-Host "✅ RDP & User Configured!"
 
-      - name: 🛠️ Install Tools (Antigravity, SandSneha, OpenVPN)
+      - name: 🛠️ Install Tools (SandSneha, OpenVPN)
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
@@ -27,17 +27,7 @@ jobs:
           Write-Host "⬇️ Installing OpenVPN Connect..."
           choco install openvpn -y
           
-          # 2. Google Antigravity (EXE Install)
-          Write-Host "⬇️ Downloading Google Antigravity..."
-          $AntiUrl = "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/windows-x64/Antigravity.exe"
-          Invoke-WebRequest -Uri $AntiUrl -OutFile "AntigravitySetup.exe"
-          
-          Write-Host "⚙️ Installing Antigravity..."
-          # Silent install flags usually /S or /silent. Trying generic.
-          Start-Process -FilePath "AntigravitySetup.exe" -ArgumentList "/S" -Wait -Passthru
-          Write-Host "✅ Antigravity Installed!"
-          
-          # 3. SandSneha App
+          # 2. SandSneha App
           Write-Host "⬇️ Downloading SandSneha App..."
           Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
           
@@ -65,7 +55,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $BackupPath
           Write-Host "✅ Backup Folder Created!"
           
-          # FIXED MONITOR SCRIPT
+          # MONITOR SCRIPT (Auto-Repo Creator)
           $ScriptContent = @"
           `$watcher = New-Object System.IO.FileSystemWatcher
           `$watcher.Path = "$BackupPath"
@@ -88,7 +78,7 @@ jobs:
                   Write-Host "🚀 New Project Detected: `$NewFolderName"
                   Set-Location `$NewFolderPath
                   
-                  # FIX: Create a file so Git has something to commit
+                  # Create a README so Git commit won't fail
                   "Project Created on $(Get-Date)" | Out-File "README.md"
                   
                   git init
