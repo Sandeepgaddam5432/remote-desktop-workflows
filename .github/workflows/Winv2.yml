@@ -23,34 +23,38 @@ jobs:
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
+          # 1. OpenVPN Connect
           Write-Host "⬇️ Installing OpenVPN Connect..."
           choco install openvpn -y
           
-          Write-Host "⬇️ Downloading & Installing Google Antigravity..."
-          $AntiGravURL = "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/windows-x64/Antigravity.exe"
-          Invoke-WebRequest -Uri $AntiGravURL -OutFile "AntigravityInstaller.exe"
-          # Installing silently
-          Start-Process -FilePath "AntigravityInstaller.exe" -ArgumentList "/S" -Wait -PassThru
+          # 2. Google Antigravity (EXE Install)
+          Write-Host "⬇️ Downloading Google Antigravity..."
+          $AntiUrl = "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.15.8-5724687216017408/windows-x64/Antigravity.exe"
+          Invoke-WebRequest -Uri $AntiUrl -OutFile "AntigravitySetup.exe"
+          
+          Write-Host "⚙️ Installing Antigravity..."
+          # Silent install flags usually /S or /silent. Trying generic.
+          Start-Process -FilePath "AntigravitySetup.exe" -ArgumentList "/S" -Wait -Passthru
           Write-Host "✅ Antigravity Installed!"
           
+          # 3. SandSneha App
           Write-Host "⬇️ Downloading SandSneha App..."
-          # Using your new bit.ly link (Make sure it redirects to direct download)
-          Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 10
+          Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
           
           Write-Host "🔓 Extracting with Password..."
           & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"C:\SandSnehaApp" -y
           
-          # Creating Shortcut for SandSneha
+          # Creating Shortcut
           $WshShell = New-Object -comObject WScript.Shell
           $ExePath = "C:\SandSnehaApp\SandSneha\SandSneha.exe"
           if (Test-Path $ExePath) {
               $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SandSneha.lnk")
               $Shortcut.TargetPath = $ExePath
               $Shortcut.Save()
-              Write-Host "✅ SandSneha Shortcut Created!"
+              Write-Host "✅ SandSneha Ready!"
           }
 
-      - name: 🤖 Setup SMART BACKUP System (Fixed Logic)
+      - name: 🤖 Setup SMART BACKUP System
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -59,8 +63,9 @@ jobs:
           
           $BackupPath = "$env:USERPROFILE\Desktop\Backup"
           New-Item -ItemType Directory -Force -Path $BackupPath
-          Write-Host "✅ Backup Folder Created at: $BackupPath"
+          Write-Host "✅ Backup Folder Created!"
           
+          # FIXED MONITOR SCRIPT
           $ScriptContent = @"
           `$watcher = New-Object System.IO.FileSystemWatcher
           `$watcher.Path = "$BackupPath"
@@ -76,38 +81,38 @@ jobs:
               `$NewFolderName = `$events.Name
               `$NewFolderPath = "$BackupPath\`$NewFolderName"
               
+              # Wait for folder creation to finalize
               Start-Sleep -Seconds 3
               
               if (Test-Path `$NewFolderPath -PathType Container) {
-                  Write-Host "🚀 Detected New Project: `$NewFolderName"
+                  Write-Host "🚀 New Project Detected: `$NewFolderName"
                   Set-Location `$NewFolderPath
                   
-                  # FIX: Create a dummy file so Git has something to commit
-                  "Backup created on $(Get-Date)" | Out-File "README.md"
+                  # FIX: Create a file so Git has something to commit
+                  "Project Created on $(Get-Date)" | Out-File "README.md"
                   
                   git init
                   git add .
-                  git commit -m "Initial Backup"
+                  git commit -m "Auto-Created Backup Repo"
                   
-                  Write-Host "☁️ Creating GitHub Repo..."
+                  Write-Host "☁️ Pushing to GitHub..."
                   echo $env:GH_TOKEN | gh auth login --with-token
                   
-                  # Create Private Repo and Push
+                  # Create Private Repo & Push
                   gh repo create "`$NewFolderName" --private --source=. --remote=origin --push
                   
                   Write-Host "✅ Uploaded Successfully!"
               }
           }
           "@
-          
           $ScriptContent | Out-File "C:\MonitorBackups.ps1"
 
       - name: 🚀 Start Tunnel & Monitor Backups
         run: |
-          # Start Cloudflare Tunnel
+          # Start Cloudflared
           $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log" -PassThru -NoNewWindow
           
-          # Start Backup Monitor in Background
+          # Start Backup Monitor Hidden
           Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File C:\MonitorBackups.ps1" -WindowStyle Minimized
           
           Write-Host "⏳ Waiting for Tunnel URL..."
@@ -119,7 +124,9 @@ jobs:
               if (Test-Path "tunnel.log") {
                   $log = Get-Content "tunnel.log" -Raw
                   if ($log -match "https://[a-z0-9-]+\\.trycloudflare\\.com") {
+                      Write-Host ""
                       Write-Host "✅ TUNNEL URL: $($matches[0])"
+                      Write-Host ""
                       $urlFound = $true
                       break
                   }
