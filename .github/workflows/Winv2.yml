@@ -34,7 +34,7 @@ jobs:
           
           Write-Host "⬇️ Downloading SandSneha App..."
           # Downloading zip (Handling redirects)
-          Invoke-WebRequest -Uri "http://bit.ly/SandSneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
+          Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
           
           Write-Host "🔓 Extracting with Password..."
           # Using 7zip to extract with password
