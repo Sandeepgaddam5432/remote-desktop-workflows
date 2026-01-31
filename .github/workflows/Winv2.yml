@@ -19,61 +19,39 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
           Write-Host "✅ RDP & User Configured!"
 
-      - name: 🛠️ Install Tools (SandSneha, OpenVPN)
+      - name: 🛠️ Install Tools
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
-          # 1. OpenVPN Connect
-          Write-Host "⬇️ Installing OpenVPN Connect..."
           choco install openvpn -y
-          
-          # 2. SandSneha App
-          Write-Host "⬇️ Downloading SandSneha App..."
           Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
-          
-          Write-Host "🔓 Extracting with Password..."
           & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"C:\SandSnehaApp" -y
-          
-          # Creating Shortcut
           $WshShell = New-Object -comObject WScript.Shell
-          $ExePath = "C:\SandSnehaApp\SandSneha\SandSneha.exe"
-          if (Test-Path $ExePath) {
-              $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SandSneha.lnk")
-              $Shortcut.TargetPath = $ExePath
-              $Shortcut.Save()
-              Write-Host "✅ SandSneha Ready!"
-          }
+          $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SandSneha.lnk")
+          $Shortcut.TargetPath = "C:\SandSnehaApp\SandSneha\SandSneha.exe"
+          $Shortcut.Save()
 
-      - name: 🤖 Setup SMART BACKUP System
+      - name: 🤖 Setup Backup System
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
-          
           $BackupPath = "$env:USERPROFILE\Desktop\Backup"
           New-Item -ItemType Directory -Force -Path $BackupPath
-          Write-Host "✅ Backup Folder Created!"
           
-          # MONITOR SCRIPT
           $ScriptContent = @"
           `$watcher = New-Object System.IO.FileSystemWatcher
           `$watcher.Path = "$BackupPath"
           `$watcher.IncludeSubdirectories = `$false
           `$watcher.EnableRaisingEvents = `$true
-          
-          Write-Host "👀 Watching for new projects..."
-          
           while (`$true) {
               `$events = `$watcher.WaitForChanged([System.IO.WatcherChangeTypes]::Created, 1000)
               if (`$events.TimedOut) { continue }
-              
               `$NewFolderName = `$events.Name
               `$NewFolderPath = "$BackupPath\`$NewFolderName"
               Start-Sleep -Seconds 3
-              
               if (Test-Path `$NewFolderPath -PathType Container) {
-                  Write-Host "🚀 New Project: `$NewFolderName"
                   Set-Location `$NewFolderPath
                   "Project Created on $(Get-Date)" | Out-File "README.md"
                   git init
@@ -81,33 +59,31 @@ jobs:
                   git commit -m "Auto-Created Backup Repo"
                   echo $env:GH_TOKEN | gh auth login --with-token
                   gh repo create "`$NewFolderName" --private --source=. --remote=origin --push
-                  Write-Host "✅ Uploaded Successfully!"
               }
           }
           "@
           $ScriptContent | Out-File "C:\MonitorBackups.ps1"
 
-      - name: 🚀 Start Tunnel & Monitor Backups
+      - name: 🚀 Start Tunnel & Monitor
         run: |
-          # Start Cloudflared with more logging
-          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log","--metrics","localhost:45678" -PassThru -NoNewWindow
+          # Start Cloudflared
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log" -PassThru -NoNewWindow
           
+          # Start Backup Monitor
           Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File C:\MonitorBackups.ps1" -WindowStyle Minimized
           
-          Write-Host "⏳ Waiting for Tunnel URL (Max 2 Mins)..."
+          Write-Host "⏳ Waiting for Tunnel URL..."
           Start-Sleep -Seconds 10
           
           $urlFound = $false
           $attempts = 0
           
-          # Increased attempts to 60 (approx 2 mins wait)
           while ($attempts -lt 60) {
               if (Test-Path "tunnel.log") {
                   $log = Get-Content "tunnel.log" -Raw
-                  if ($log -match "https://[a-z0-9-]+\\.trycloudflare\\.com") {
-                      Write-Host ""
-                      Write-Host "✅ TUNNEL URL: $($matches[0])"
-                      Write-Host ""
+                  # Updated Regex to catch URL even in JSON logs
+                  if ($log -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
+                      Write-Host "✅ TUNNEL URL FOUND: $($matches[0])"
                       $urlFound = $true
                       break
                   }
@@ -116,11 +92,13 @@ jobs:
               $attempts++
           }
           
-          if ($urlFound) {
-              Write-Host "🎉 Success! Keep this tab open."
-              while (!$process.HasExited) { Start-Sleep -Seconds 10; Write-Host "✓ Active" }
-          } else {
-              Write-Host "❌ URL not found. Showing tunnel.log content for debugging:"
-              if (Test-Path "tunnel.log") { Get-Content "tunnel.log" } else { Write-Host "Log file not found!" }
-              exit 1
+          if (-not $urlFound) {
+              Write-Host "⚠️ URL Auto-detect failed. Printing logs:"
+              Get-Content "tunnel.log"
+          }
+          
+          # Keep Alive Loop (Updated to not exit even if URL logic fails, so you can check logs manually)
+          while (!$process.HasExited) { 
+              Start-Sleep -Seconds 10 
+              Write-Host "✓ Active - Session Running" 
           }
