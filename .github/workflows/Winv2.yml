@@ -19,17 +19,40 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
           Write-Host "✅ RDP & User Configured!"
 
-      - name: 🛠️ Install Tools
+      - name: 🛠️ Download & Install From Zip
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
-          choco install openvpn -y
+          $DesktopPath = "$env:USERPROFILE\Desktop"
+          $ExtractPath = "$DesktopPath\SandSneha"
+          
+          Write-Host "⬇️ Downloading Zip..."
           Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
-          & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"C:\SandSnehaApp" -y
-          $WshShell = New-Object -comObject WScript.Shell
-          $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\SandSneha.lnk")
-          $Shortcut.TargetPath = "C:\SandSnehaApp\SandSneha\SandSneha.exe"
-          $Shortcut.Save()
+          
+          Write-Host "🔓 Extracting to Desktop..."
+          & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"$ExtractPath" -y
+          
+          Write-Host "💿 Installing Tools from Zip..."
+          
+          # 1. Install OpenVPN (MSI) - Silent
+          $VpnInstaller = "$ExtractPath\Installers\openvpn-connect-3.8.0.4528_signed.msi"
+          if (Test-Path $VpnInstaller) {
+              Write-Host "Installing OpenVPN..."
+              Start-Process "msiexec.exe" -ArgumentList "/i `"$VpnInstaller`" /quiet /norestart" -Wait
+              Write-Host "✅ OpenVPN Installed"
+          } else { Write-Host "⚠️ OpenVPN Installer not found at $VpnInstaller" }
+
+          # 2. Install Antigravity (EXE) - Silent (Assuming /S for silent, standard for many exes)
+          $AntiGravInstaller = "$ExtractPath\Installers\Antigravity.exe"
+          if (Test-Path $AntiGravInstaller) {
+              Write-Host "Installing Antigravity..."
+              # Using Start-Process to run it. If it supports silent flags, add them to ArgumentList like "/S" or "/SILENT"
+              Start-Process -FilePath $AntiGravInstaller -ArgumentList "/S" -PassThru
+              Write-Host "✅ Antigravity Triggered"
+          } else { Write-Host "⚠️ Antigravity Installer not found at $AntiGravInstaller" }
+          
+          # Create Shortcut for Extracted Folder on Desktop (Optional, since folder is already there)
+          Write-Host "✅ Setup Complete. Files are in $ExtractPath"
 
       - name: 🤖 Setup Backup System
         env:
@@ -45,20 +68,36 @@ jobs:
           `$watcher.Path = "$BackupPath"
           `$watcher.IncludeSubdirectories = `$false
           `$watcher.EnableRaisingEvents = `$true
+          
+          Write-Host "👀 Monitoring $BackupPath for new projects..."
+          
           while (`$true) {
               `$events = `$watcher.WaitForChanged([System.IO.WatcherChangeTypes]::Created, 1000)
               if (`$events.TimedOut) { continue }
+              
               `$NewFolderName = `$events.Name
               `$NewFolderPath = "$BackupPath\`$NewFolderName"
+              
+              # Wait for folder creation to finalize
               Start-Sleep -Seconds 3
+              
               if (Test-Path `$NewFolderPath -PathType Container) {
+                  Write-Host "🚀 New Project Detected: `$NewFolderName"
                   Set-Location `$NewFolderPath
-                  "Project Created on $(Get-Date)" | Out-File "README.md"
+                  
+                  # 1. Create a file so Git has something to commit (Fixes 'nothing to commit' error)
+                  "Backup created on $(Get-Date)" | Out-File "README.md"
+                  
+                  # 2. Initialize and Commit
                   git init
                   git add .
-                  git commit -m "Auto-Created Backup Repo"
+                  git commit -m "Initial Backup"
+                  
+                  # 3. Create Repo and Push
+                  Write-Host "☁️ Pushing to GitHub..."
                   echo $env:GH_TOKEN | gh auth login --with-token
                   gh repo create "`$NewFolderName" --private --source=. --remote=origin --push
+                  Write-Host "✅ Backup Complete!"
               }
           }
           "@
@@ -69,7 +108,7 @@ jobs:
           # Start Cloudflared
           $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log" -PassThru -NoNewWindow
           
-          # Start Backup Monitor
+          # Start Backup Monitor in Background
           Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File C:\MonitorBackups.ps1" -WindowStyle Minimized
           
           Write-Host "⏳ Waiting for Tunnel URL..."
@@ -81,7 +120,6 @@ jobs:
           while ($attempts -lt 60) {
               if (Test-Path "tunnel.log") {
                   $log = Get-Content "tunnel.log" -Raw
-                  # Updated Regex to catch URL even in JSON logs
                   if ($log -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
                       Write-Host "✅ TUNNEL URL FOUND: $($matches[0])"
                       $urlFound = $true
@@ -97,7 +135,7 @@ jobs:
               Get-Content "tunnel.log"
           }
           
-          # Keep Alive Loop (Updated to not exit even if URL logic fails, so you can check logs manually)
+          # Keep Alive Loop
           while (!$process.HasExited) { 
               Start-Sleep -Seconds 10 
               Write-Host "✓ Active - Session Running" 
