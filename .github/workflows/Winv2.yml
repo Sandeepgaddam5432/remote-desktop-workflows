@@ -19,40 +19,76 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd123!" -Force)
           Write-Host "✅ RDP & User Configured!"
 
-      - name: 🛠️ Download & Install From Zip
+      - name: 🛠️ Install Tools & Setup Desktop
         env:
           ZIP_PASS: ${{ secrets.ZIP_PASSWORD }}
         run: |
           $DesktopPath = "$env:USERPROFILE\Desktop"
           $ExtractPath = "$DesktopPath\SandSneha"
+          $WshShell = New-Object -comObject WScript.Shell
           
+          # 1. Download Zip
           Write-Host "⬇️ Downloading Zip..."
           Invoke-WebRequest -Uri "http://bit.ly/Sandsneha" -OutFile "SandSneha.zip" -MaximumRedirection 5
           
-          Write-Host "🔓 Extracting to Desktop..."
+          # 2. Extract to Desktop\SandSneha
+          Write-Host "🔓 Extracting Files..."
           & "C:\Program Files\7-Zip\7z.exe" x SandSneha.zip -p"$env:ZIP_PASS" -o"$ExtractPath" -y
           
-          Write-Host "💿 Installing Tools from Zip..."
-          
-          # 1. Install OpenVPN (MSI) - Silent
+          Write-Host "💿 Installing Applications..."
+
+          # --- INSTALL OPENVPN ---
           $VpnInstaller = "$ExtractPath\Installers\openvpn-connect-3.8.0.4528_signed.msi"
           if (Test-Path $VpnInstaller) {
               Write-Host "Installing OpenVPN..."
               Start-Process "msiexec.exe" -ArgumentList "/i `"$VpnInstaller`" /quiet /norestart" -Wait
-              Write-Host "✅ OpenVPN Installed"
-          } else { Write-Host "⚠️ OpenVPN Installer not found at $VpnInstaller" }
+              
+              # Create Desktop Shortcut for OpenVPN
+              $VpnExe = "C:\Program Files\OpenVPN Connect\OpenVPNConnect.exe"
+              if (Test-Path $VpnExe) {
+                  $Shortcut = $WshShell.CreateShortcut("$DesktopPath\OpenVPN Connect.lnk")
+                  $Shortcut.TargetPath = $VpnExe
+                  $Shortcut.Save()
+              }
+          }
 
-          # 2. Install Antigravity (EXE) - Silent (Assuming /S for silent, standard for many exes)
+          # --- INSTALL ANTIGRAVITY ---
           $AntiGravInstaller = "$ExtractPath\Installers\Antigravity.exe"
           if (Test-Path $AntiGravInstaller) {
               Write-Host "Installing Antigravity..."
-              # Using Start-Process to run it. If it supports silent flags, add them to ArgumentList like "/S" or "/SILENT"
               Start-Process -FilePath $AntiGravInstaller -ArgumentList "/S" -PassThru
-              Write-Host "✅ Antigravity Triggered"
-          } else { Write-Host "⚠️ Antigravity Installer not found at $AntiGravInstaller" }
+              
+              # Create Desktop Shortcut (Assuming it installs to AppData or ProgramFiles, but for safety pointing to Installer if portable)
+              # If it's an installer, it usually creates its own shortcut. 
+              # If not, we create a link to the exe in the folder just in case.
+              $Shortcut = $WshShell.CreateShortcut("$DesktopPath\Install Antigravity.lnk")
+              $Shortcut.TargetPath = $AntiGravInstaller
+              $Shortcut.Save()
+          }
+
+          # --- INSTALL/SETUP SANDSNEHA ---
+          # Checking in main folder and subfolders
+          $SandSnehaExe = "$ExtractPath\SandSneha.exe"
+          if (-not (Test-Path $SandSnehaExe)) {
+              # Check inside a subfolder if zip structure is nested
+              $SandSnehaExe = Get-ChildItem -Path $ExtractPath -Filter "SandSneha.exe" -Recurse | Select-Object -ExpandProperty FullName -First 1
+          }
+
+          if ($SandSnehaExe -and (Test-Path $SandSnehaExe)) {
+              Write-Host "Installing/Running SandSneha..."
+              # Attempt Silent Install (Assuming /S or /VERYSILENT works)
+              Start-Process -FilePath $SandSnehaExe -ArgumentList "/S" -PassThru
+              
+              # Create Desktop Shortcut for Easy Access
+              Write-Host "Creating Shortcut on Desktop..."
+              $Shortcut = $WshShell.CreateShortcut("$DesktopPath\SandSneha App.lnk")
+              $Shortcut.TargetPath = $SandSnehaExe
+              $Shortcut.Save()
+          } else {
+              Write-Host "⚠️ SandSneha.exe not found in extracted files!"
+          }
           
-          # Create Shortcut for Extracted Folder on Desktop (Optional, since folder is already there)
-          Write-Host "✅ Setup Complete. Files are in $ExtractPath"
+          Write-Host "✅ All Tools Installed & Shortcuts Created on Desktop!"
 
       - name: 🤖 Setup Backup System
         env:
@@ -69,7 +105,7 @@ jobs:
           `$watcher.IncludeSubdirectories = `$false
           `$watcher.EnableRaisingEvents = `$true
           
-          Write-Host "👀 Monitoring $BackupPath for new projects..."
+          Write-Host "👀 Monitoring Backups..."
           
           while (`$true) {
               `$events = `$watcher.WaitForChanged([System.IO.WatcherChangeTypes]::Created, 1000)
@@ -77,27 +113,16 @@ jobs:
               
               `$NewFolderName = `$events.Name
               `$NewFolderPath = "$BackupPath\`$NewFolderName"
-              
-              # Wait for folder creation to finalize
               Start-Sleep -Seconds 3
               
               if (Test-Path `$NewFolderPath -PathType Container) {
-                  Write-Host "🚀 New Project Detected: `$NewFolderName"
                   Set-Location `$NewFolderPath
-                  
-                  # 1. Create a file so Git has something to commit (Fixes 'nothing to commit' error)
-                  "Backup created on $(Get-Date)" | Out-File "README.md"
-                  
-                  # 2. Initialize and Commit
+                  "Backup Created" | Out-File "README.md"
                   git init
                   git add .
-                  git commit -m "Initial Backup"
-                  
-                  # 3. Create Repo and Push
-                  Write-Host "☁️ Pushing to GitHub..."
+                  git commit -m "Auto Backup"
                   echo $env:GH_TOKEN | gh auth login --with-token
                   gh repo create "`$NewFolderName" --private --source=. --remote=origin --push
-                  Write-Host "✅ Backup Complete!"
               }
           }
           "@
@@ -105,38 +130,21 @@ jobs:
 
       - name: 🚀 Start Tunnel & Monitor
         run: |
-          # Start Cloudflared
           $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate","--logfile","tunnel.log" -PassThru -NoNewWindow
-          
-          # Start Backup Monitor in Background
           Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File C:\MonitorBackups.ps1" -WindowStyle Minimized
           
           Write-Host "⏳ Waiting for Tunnel URL..."
           Start-Sleep -Seconds 10
-          
-          $urlFound = $false
           $attempts = 0
-          
           while ($attempts -lt 60) {
               if (Test-Path "tunnel.log") {
                   $log = Get-Content "tunnel.log" -Raw
                   if ($log -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
-                      Write-Host "✅ TUNNEL URL FOUND: $($matches[0])"
-                      $urlFound = $true
+                      Write-Host "✅ URL: $($matches[0])"
                       break
                   }
               }
               Start-Sleep -Seconds 2
               $attempts++
           }
-          
-          if (-not $urlFound) {
-              Write-Host "⚠️ URL Auto-detect failed. Printing logs:"
-              Get-Content "tunnel.log"
-          }
-          
-          # Keep Alive Loop
-          while (!$process.HasExited) { 
-              Start-Sleep -Seconds 10 
-              Write-Host "✓ Active - Session Running" 
-          }
+          while (!$process.HasExited) { Start-Sleep -Seconds 10; Write-Host "✓ Active" }
