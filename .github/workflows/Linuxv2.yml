@@ -1,0 +1,113 @@
+name: RICH LINUX DESKTOP - GNOME (XRDP + Cloudflare)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Install Cloudflared Binary
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
+          echo "✅ Cloudflared installed"
+
+      - name: Install GNOME Desktop (Rich UI) + XRDP
+        run: |
+          sudo apt-get update
+          # Installing Minimal GNOME to save time, but keeping the Rich look
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ubuntu-desktop-minimal gnome-session gnome-terminal \
+            xrdp dbus-x11 x11-xserver-utils
+          
+          # Configure XRDP for GNOME
+          sudo adduser xrdp ssl-cert
+          echo "gnome-session" > ~/.xsession
+          sudo sed -i 's/3389/3389/g' /etc/xrdp/xrdp.ini
+          sudo systemctl enable xrdp
+          echo "✅ GNOME & XRDP Installed"
+
+      - name: Install VS Code & Google Antigravity
+        run: |
+          # 1. Install VS Code (Official)
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+          sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+          echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y code
+
+          # 2. Install Google Antigravity (Simulated latest setup)
+          # Note: Since it's a web/cloud-first IDE, we install Chrome to access it perfectly or the client if available.
+          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt install -y ./google-chrome-stable_current_amd64.deb
+          
+          # Creating a Desktop Shortcut for Antigravity
+          mkdir -p ~/Desktop
+          cat > ~/Desktop/Antigravity.desktop <<EOF
+          [Desktop Entry]
+          Version=1.0
+          Name=Google Antigravity
+          Comment=AI Powered IDE
+          Exec=google-chrome --app=https://antigravity.google/
+          Icon=google-chrome
+          Terminal=false
+          Type=Application
+          Categories=Development;
+          EOF
+          chmod +x ~/Desktop/Antigravity.desktop
+          
+          echo "✅ VS Code & Google Antigravity Ready"
+
+      - name: Setup User & Password
+        run: |
+          # Creating a user 'runner' with password
+          sudo useradd -m -s /bin/bash runner || true
+          echo "runner:Antigravity2026!" | sudo chpasswd
+          sudo usermod -aG sudo runner
+          
+          # Granting RDP access
+          echo "✅ User 'runner' created with password: Antigravity2026!"
+
+      - name: Start XRDP Server
+        run: |
+          sudo service xrdp start
+          echo "✅ XRDP Server started on Port 3389"
+
+      - name: Start TryCloudflare Tunnel (RDP Mode)
+        run: |
+          # Tunneling the RDP port (3389) instead of VNC
+          /usr/local/bin/cloudflared tunnel --url tcp://localhost:3389 > tunnel.log 2>&1 &
+          
+          echo "Waiting for Tunnel URL..."
+          for i in {1..30}; do
+            sleep 2
+            TUN=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
+            if [ -n "$TUN" ]; then echo "🌐 Tunnel URL: $TUN"; break; fi
+          done
+          echo "$TUN" > tunnel_url.txt
+
+      - name: SHOW CONNECTION INFO (RDP)
+        run: |
+          TUN=$(cat tunnel_url.txt)
+          HOSTNAME=${TUN#https://}
+          
+          echo "=========================================================="
+          echo "🚀 RICH DESKTOP READY (GNOME)"
+          echo "=========================================================="
+          echo "💻 Connection Method: RDP (Remote Desktop Protocol)"
+          echo "   (Use 'Remote Desktop Connection' on Windows or 'Remmina' on Linux)"
+          echo ""
+          echo "🔗 Local Proxy Command (Run this on your PC):"
+          echo "   cloudflared access tcp --hostname $HOSTNAME --url localhost:3389"
+          echo ""
+          echo "👤 Username : runner"
+          echo "🔑 Password : Antigravity2026!"
+          echo "=========================================================="
+
+      - name: Keep Alive
+        run: |
+          sleep 21600 # 6 Hours
