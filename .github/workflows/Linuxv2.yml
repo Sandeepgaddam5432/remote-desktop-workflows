@@ -1,4 +1,4 @@
-name: RICH LINUX DESKTOP - GNOME (XRDP + Cloudflare)
+name: RICH LINUX (SMART GNOME) - FIXED
 
 on:
   workflow_dispatch:
@@ -9,105 +9,92 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Install Cloudflared Binary
+      - name: Install Cloudflared
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /tmp/cloudflared
           chmod +x /tmp/cloudflared
           sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
-          echo "✅ Cloudflared installed"
 
-      - name: Install GNOME Desktop (Rich UI) + XRDP
+      - name: Smart GNOME Install (No Bloat)
         run: |
           sudo apt-get update
-          # Installing Minimal GNOME to save time, but keeping the Rich look
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            ubuntu-desktop-minimal gnome-session gnome-terminal \
-            xrdp dbus-x11 x11-xserver-utils
           
-          # Configure XRDP for GNOME
+          # Remove heavy tools that cause hangs
+          sudo apt-get remove -y --purge man-db firewalld ufw || true
+          
+          # Install ONLY the GUI parts of GNOME (Skipping Kernel/System updates)
+          # Using --no-install-recommends to speed up drastically
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            gnome-session gnome-shell gnome-terminal nautilus \
+            dbus-x11 x11-xserver-utils xorg \
+            adwaita-icon-theme-full fonts-cantarell
+          
+          echo "✅ GUI Installed (Lightweight Mode)"
+
+      - name: Install XRDP (Remote Desktop)
+        run: |
+          sudo apt-get install -y --no-install-recommends xrdp
           sudo adduser xrdp ssl-cert
+          
+          # Configure XRDP to use GNOME
           echo "gnome-session" > ~/.xsession
           sudo sed -i 's/3389/3389/g' /etc/xrdp/xrdp.ini
           sudo systemctl enable xrdp
-          echo "✅ GNOME & XRDP Installed"
+          sudo service xrdp start
 
-      - name: Install VS Code & Google Antigravity
+      - name: Install VS Code & Antigravity (Chrome)
         run: |
-          # 1. Install VS Code (Official)
+          # VS Code
           wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
           sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
           echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y code
 
-          # 2. Install Google Antigravity (Simulated latest setup)
-          # Note: Since it's a web/cloud-first IDE, we install Chrome to access it perfectly or the client if available.
+          # Chrome (for Antigravity)
           wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y ./google-chrome-stable_current_amd64.deb
-          
-          # Creating a Desktop Shortcut for Antigravity
+          sudo apt install -y ./google-chrome-stable_current_amd64.deb || sudo apt-get install -f -y
+
+          # Desktop Shortcut
           mkdir -p ~/Desktop
           cat > ~/Desktop/Antigravity.desktop <<EOF
           [Desktop Entry]
           Version=1.0
           Name=Google Antigravity
-          Comment=AI Powered IDE
-          Exec=google-chrome --app=https://antigravity.google/
+          Exec=google-chrome --app=https://antigravity.google/ --no-sandbox
           Icon=google-chrome
-          Terminal=false
           Type=Application
-          Categories=Development;
           EOF
           chmod +x ~/Desktop/Antigravity.desktop
-          
-          echo "✅ VS Code & Google Antigravity Ready"
 
-      - name: Setup User & Password
+      - name: Setup User (runner)
         run: |
-          # Creating a user 'runner' with password
           sudo useradd -m -s /bin/bash runner || true
           echo "runner:Antigravity2026!" | sudo chpasswd
           sudo usermod -aG sudo runner
-          
-          # Granting RDP access
-          echo "✅ User 'runner' created with password: Antigravity2026!"
 
-      - name: Start XRDP Server
+      - name: Start Cloudflare Tunnel (RDP)
         run: |
-          sudo service xrdp start
-          echo "✅ XRDP Server started on Port 3389"
-
-      - name: Start TryCloudflare Tunnel (RDP Mode)
-        run: |
-          # Tunneling the RDP port (3389) instead of VNC
           /usr/local/bin/cloudflared tunnel --url tcp://localhost:3389 > tunnel.log 2>&1 &
           
-          echo "Waiting for Tunnel URL..."
+          echo "Waiting for URL..."
           for i in {1..30}; do
             sleep 2
             TUN=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
-            if [ -n "$TUN" ]; then echo "🌐 Tunnel URL: $TUN"; break; fi
+            if [ -n "$TUN" ]; then echo "🌐 Tunnel: $TUN"; break; fi
           done
           echo "$TUN" > tunnel_url.txt
 
-      - name: SHOW CONNECTION INFO (RDP)
+      - name: SHOW CONNECT INFO
         run: |
           TUN=$(cat tunnel_url.txt)
-          HOSTNAME=${TUN#https://}
-          
-          echo "=========================================================="
-          echo "🚀 RICH DESKTOP READY (GNOME)"
-          echo "=========================================================="
-          echo "💻 Connection Method: RDP (Remote Desktop Protocol)"
-          echo "   (Use 'Remote Desktop Connection' on Windows or 'Remmina' on Linux)"
-          echo ""
-          echo "🔗 Local Proxy Command (Run this on your PC):"
-          echo "   cloudflared access tcp --hostname $HOSTNAME --url localhost:3389"
-          echo ""
-          echo "👤 Username : runner"
-          echo "🔑 Password : Antigravity2026!"
-          echo "=========================================================="
+          echo "==================================================="
+          echo "   RICH GNOME DESKTOP READY (Smart Version)"
+          echo "==================================================="
+          echo "Command: cloudflared access tcp --hostname ${TUN#https://} --url localhost:3389"
+          echo "User   : runner"
+          echo "Pass   : Antigravity2026!"
+          echo "==================================================="
 
       - name: Keep Alive
-        run: |
-          sleep 21600 # 6 Hours
+        run: sleep 21600
