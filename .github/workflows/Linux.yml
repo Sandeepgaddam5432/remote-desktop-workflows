@@ -22,19 +22,22 @@ jobs:
           sudo systemctl start xrdp
           sudo adduser xrdp ssl-cert
 
-      - name: 👤 Create User & Fix Desktop
+      - name: 👤 Create User & Prepare Folders
         run: |
-          # Create User
+          # 1. Create the RDP User
           sudo useradd -m -s /bin/bash runneradmin
           echo "runneradmin:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo runneradmin
           
-          # 🟢 IMPORTANT FIX: Manually Create Desktop Folder
+          # 2. Create Desktop Folder Manually
           echo "Creating Desktop Directory..."
-          sudo mkdir -p /home/runneradmin/Desktop
-          sudo chown -R runneradmin:runneradmin /home/runneradmin/Desktop
-          sudo chmod 755 /home/runneradmin/Desktop
-          echo "✅ Desktop Folder Created!"
+          sudo mkdir -p /home/runneradmin/Desktop/sand
+          
+          # 🟢 VITAL FIX: Temporarily give full permissions to everyone
+          # This allows the GitHub Runner to copy files in the next steps without 'Permission Denied'
+          sudo chmod -R 777 /home/runneradmin/Desktop
+          
+          echo "✅ User & Folders Ready (Unlocked for Setup)"
 
       - name: 📦 Install Dev Tools (VS Code, Python, Node)
         run: |
@@ -55,7 +58,7 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
           
           echo "🔄 Updating Apt..."
-          sudo apt-get update || echo "Apt update warning (ignoring)..."
+          sudo apt-get update || echo "Apt update warning..."
           
           # Install Package
           if sudo apt-get install -y antigravity; then
@@ -70,21 +73,18 @@ jobs:
               fi
           fi
 
-          # Create Shortcut
-          if [ -d "/home/runneradmin/Desktop" ]; then
-              echo "[Desktop Entry]
-              Version=1.0
-              Type=Application
-              Name=Google Antigravity
-              Exec=/usr/bin/antigravity %F
-              Icon=utilities-terminal
-              Terminal=false
-              Categories=Development;IDE;" | sudo tee /home/runneradmin/Desktop/Antigravity.desktop > /dev/null
-              
-              sudo chmod +x /home/runneradmin/Desktop/Antigravity.desktop
-              sudo chown runneradmin:runneradmin /home/runneradmin/Desktop/Antigravity.desktop
-              echo "✅ Shortcut Created!"
-          fi
+          # Create Shortcut (Permissions are 777 now, so no sudo needed technically, but keeping sudo for safety)
+          echo "[Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Google Antigravity
+          Exec=/usr/bin/antigravity %F
+          Icon=utilities-terminal
+          Terminal=false
+          Categories=Development;IDE;" | sudo tee /home/runneradmin/Desktop/Antigravity.desktop > /dev/null
+          
+          sudo chmod +x /home/runneradmin/Desktop/Antigravity.desktop
+          echo "✅ Shortcut Created!"
 
       - name: 🤖 Setup Intelligent Backup System
         env:
@@ -93,23 +93,21 @@ jobs:
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
           
+          # Paths
           BASE_DIR="/home/runneradmin/Desktop"
           SAND_DIR="$BASE_DIR/sand"
           MASTER_REPO="backup-files"
           MASTER_PATH="$BASE_DIR/$MASTER_REPO"
 
-          # Create Sand Directory
-          sudo mkdir -p "$SAND_DIR"
-          sudo chown runneradmin:runneradmin "$SAND_DIR"
-          
-          # 🟢 REMOVED: 'gh auth login' command. 
-          # Environment variable GH_TOKEN works automatically.
+          # NOTE: Permissions are 777 here, so 'mkdir' and 'git' will work perfectly.
 
           # 1. Check/Create Master Repo
           echo "Checking Master Repo..."
           if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
+              echo "⬇️ Cloning Master Repo..."
               gh repo clone "$MASTER_REPO" "$MASTER_PATH"
           else
+              echo "🆕 Creating Master Repo..."
               mkdir -p "$MASTER_PATH"
               cd "$MASTER_PATH"
               echo "# Backup Files Registry" > README.md
@@ -122,16 +120,15 @@ jobs:
           # 2. Restore Projects
           if [ -f "$MASTER_PATH/README.md" ]; then
               cd "$SAND_DIR"
+              echo "♻️ Restoring Projects from Registry..."
               while read -r repo_name; do
                   if [[ "$repo_name" == *"/"* ]]; then
+                      echo "⬇️ Downloading $repo_name..."
                       gh repo clone "$repo_name" || echo "Skipping $repo_name"
                   fi
               done < "$MASTER_PATH/README.md"
           fi
           
-          # Fix permissions for restored files
-          sudo chown -R runneradmin:runneradmin "$SAND_DIR"
-
           # 3. Create Watcher Script
           cat << 'EOF' > /home/runneradmin/monitor_backups.sh
           #!/bin/bash
@@ -173,13 +170,18 @@ jobs:
           EOF
           
           chmod +x /home/runneradmin/monitor_backups.sh
-          sudo chown runneradmin:runneradmin /home/runneradmin/monitor_backups.sh
 
       - name: 🚀 Start Tunnel & Monitor
         run: |
+          # 🟢 FINAL FIX: Transfer Ownership back to runneradmin
+          echo "🔒 Locking permissions for runneradmin..."
+          sudo chown -R runneradmin:runneradmin /home/runneradmin/Desktop
+          sudo chmod -R 755 /home/runneradmin/Desktop
+          
+          # Start Tunnel
           cloudflared tunnel --url tcp://localhost:3389 --no-autoupdate > tunnel.log 2>&1 &
           
-          # Start Monitor as runneradmin (not root)
+          # Start Monitor as runneradmin
           sudo -u runneradmin nohup bash /home/runneradmin/monitor_backups.sh > monitor.log 2>&1 &
           
           echo "⏳ Waiting for Tunnel URL..."
@@ -195,8 +197,13 @@ jobs:
           if [ -z "$URL" ]; then
             tail -n 20 tunnel.log
           else
-            echo "✅ SUCCESS! CONNECT: $URL"
-            echo "User: runneradmin | Pass: P@ssw0rd123!"
+            echo ""
+            echo "========================================================"
+            echo "✅ SUCCESS! MACHINE IS READY"
+            echo "🔗 URL: $URL"
+            echo "👤 User: runneradmin"
+            echo "🔑 Pass: P@ssw0rd123!"
+            echo "========================================================"
           fi
           
           while true; do sleep 30; done
