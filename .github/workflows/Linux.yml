@@ -1,4 +1,4 @@
-name: ULTIMATE UBUNTU DEV MACHINE
+name: ULTIMATE UBUNTU WORKSTATION
 on:
   workflow_dispatch:
 
@@ -22,27 +22,30 @@ jobs:
           sudo systemctl start xrdp
           sudo adduser xrdp ssl-cert
 
-      - name: 👤 Create User & Prepare Folders
+      - name: 👤 Create User 'sandsneha' & Unlock Permissions
         run: |
-          # 1. Create the RDP User
-          sudo useradd -m -s /bin/bash runneradmin
-          echo "runneradmin:P@ssw0rd123!" | sudo chpasswd
-          sudo usermod -aG sudo runneradmin
+          # 1. Create User "sandsneha"
+          sudo useradd -m -s /bin/bash sandsneha
+          echo "sandsneha:P@ssw0rd123!" | sudo chpasswd
+          sudo usermod -aG sudo sandsneha
           
-          # 2. Create Desktop Folder Manually
-          echo "Creating Desktop Directory..."
-          sudo mkdir -p /home/runneradmin/Desktop/sand
+          # 2. Create Desktop & Sand Folder
+          echo "Creating Directories..."
+          sudo mkdir -p /home/sandsneha/Desktop/sand
           
-          # 🟢 VITAL FIX: Temporarily give full permissions to everyone
-          # This allows the GitHub Runner to copy files in the next steps without 'Permission Denied'
-          sudo chmod -R 777 /home/runneradmin/Desktop
+          # 🟢 CRITICAL FIX: Unlock folder permissions for Setup Phase
+          # This allows the GitHub Runner to write files without "Permission Denied"
+          sudo chmod -R 777 /home/sandsneha
           
-          echo "✅ User & Folders Ready (Unlocked for Setup)"
+          echo "✅ User 'sandsneha' Created & Permissions Unlocked!"
 
       - name: 📦 Install Dev Tools (VS Code, Python, Node)
         run: |
           sudo apt-get install -y git wget unzip curl software-properties-common python3 python3-pip nodejs npm
           sudo snap install code --classic
+          
+          # Stop Git Hints in Logs
+          git config --global advice.defaultBranchName false
 
       - name: 🌌 Install Google Antigravity IDE
         continue-on-error: true
@@ -50,22 +53,18 @@ jobs:
           echo "Trying to Install Antigravity..."
           
           # Method 1: Repository Method
-          echo "⬇️ Downloading Keys..."
           sudo mkdir -p /etc/apt/keyrings
           curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
           
-          echo "📝 Adding Repo..."
           echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
           
-          echo "🔄 Updating Apt..."
-          sudo apt-get update || echo "Apt update warning..."
+          sudo apt-get update || echo "Update warning..."
           
-          # Install Package
           if sudo apt-get install -y antigravity; then
               echo "✅ Installed via APT"
           else
               echo "⚠️ APT Failed. Trying Direct Download..."
-              wget -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" || echo "Direct link failed"
+              wget -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" || echo "Download failed"
               if [ -f "antigravity.deb" ]; then
                   sudo dpkg -i antigravity.deb
                   sudo apt-get install -f -y
@@ -73,7 +72,7 @@ jobs:
               fi
           fi
 
-          # Create Shortcut (Permissions are 777 now, so no sudo needed technically, but keeping sudo for safety)
+          # Create Shortcut
           echo "[Desktop Entry]
           Version=1.0
           Type=Application
@@ -81,9 +80,9 @@ jobs:
           Exec=/usr/bin/antigravity %F
           Icon=utilities-terminal
           Terminal=false
-          Categories=Development;IDE;" | sudo tee /home/runneradmin/Desktop/Antigravity.desktop > /dev/null
+          Categories=Development;IDE;" | sudo tee /home/sandsneha/Desktop/Antigravity.desktop > /dev/null
           
-          sudo chmod +x /home/runneradmin/Desktop/Antigravity.desktop
+          sudo chmod +x /home/sandsneha/Desktop/Antigravity.desktop
           echo "✅ Shortcut Created!"
 
       - name: 🤖 Setup Intelligent Backup System
@@ -92,22 +91,20 @@ jobs:
         run: |
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
+          git config --global advice.defaultBranchName false
           
-          # Paths
-          BASE_DIR="/home/runneradmin/Desktop"
+          BASE_DIR="/home/sandsneha/Desktop"
           SAND_DIR="$BASE_DIR/sand"
           MASTER_REPO="backup-files"
           MASTER_PATH="$BASE_DIR/$MASTER_REPO"
 
-          # NOTE: Permissions are 777 here, so 'mkdir' and 'git' will work perfectly.
-
           # 1. Check/Create Master Repo
           echo "Checking Master Repo..."
           if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
-              echo "⬇️ Cloning Master Repo..."
+              echo "⬇️ Cloning Registry..."
               gh repo clone "$MASTER_REPO" "$MASTER_PATH"
           else
-              echo "🆕 Creating Master Repo..."
+              echo "🆕 Creating Registry..."
               mkdir -p "$MASTER_PATH"
               cd "$MASTER_PATH"
               echo "# Backup Files Registry" > README.md
@@ -120,7 +117,7 @@ jobs:
           # 2. Restore Projects
           if [ -f "$MASTER_PATH/README.md" ]; then
               cd "$SAND_DIR"
-              echo "♻️ Restoring Projects from Registry..."
+              echo "♻️ Restoring Projects..."
               while read -r repo_name; do
                   if [[ "$repo_name" == *"/"* ]]; then
                       echo "⬇️ Downloading $repo_name..."
@@ -129,22 +126,22 @@ jobs:
               done < "$MASTER_PATH/README.md"
           fi
           
-          # 3. Create Watcher Script
-          cat << 'EOF' > /home/runneradmin/monitor_backups.sh
+          # 3. Create Watcher Script (Using 'sudo tee' to prevent Permission Denied)
+          echo "📝 Writing Monitor Script..."
+          sudo tee /home/sandsneha/monitor_backups.sh << 'EOF'
           #!/bin/bash
-          SAND_DIR="/home/runneradmin/Desktop/sand"
-          MASTER_PATH="/home/runneradmin/Desktop/backup-files"
+          SAND_DIR="/home/sandsneha/Desktop/sand"
+          MASTER_PATH="/home/sandsneha/Desktop/backup-files"
           
-          # Setup Git for this user session
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
+          git config --global advice.defaultBranchName false
 
           while true; do
               for d in "$SAND_DIR"/*/; do
                   [ -d "$d" ] || continue
                   FOLDER_NAME=$(basename "$d")
                   
-                  # If not in Registry, it's new
                   if ! grep -q "$FOLDER_NAME" "$MASTER_PATH/README.md"; then
                       cd "$d"
                       if [ ! -d ".git" ]; then
@@ -153,11 +150,9 @@ jobs:
                           git commit -m "Auto Backup"
                           gh repo create "$FOLDER_NAME" --private --source=. --remote=origin --push
                           
-                          # Update Registry
                           FULL_REPO=$(gh repo view --json dependencyProjects --template '{{.owner.login}}')/"$FOLDER_NAME"
                           echo "$FULL_REPO" >> "$MASTER_PATH/README.md"
                           
-                          # Push Registry Update
                           cd "$MASTER_PATH"
                           git add README.md
                           git commit -m "Added $FOLDER_NAME"
@@ -169,20 +164,20 @@ jobs:
           done
           EOF
           
-          chmod +x /home/runneradmin/monitor_backups.sh
+          sudo chmod +x /home/sandsneha/monitor_backups.sh
+          echo "✅ Backup System Ready!"
 
       - name: 🚀 Start Tunnel & Monitor
         run: |
-          # 🟢 FINAL FIX: Transfer Ownership back to runneradmin
-          echo "🔒 Locking permissions for runneradmin..."
-          sudo chown -R runneradmin:runneradmin /home/runneradmin/Desktop
-          sudo chmod -R 755 /home/runneradmin/Desktop
+          # 🟢 FINAL STEP: Secure Permissions & Start
+          echo "🔒 Securing Permissions..."
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
           
           # Start Tunnel
           cloudflared tunnel --url tcp://localhost:3389 --no-autoupdate > tunnel.log 2>&1 &
           
-          # Start Monitor as runneradmin
-          sudo -u runneradmin nohup bash /home/runneradmin/monitor_backups.sh > monitor.log 2>&1 &
+          # Start Monitor as sandsneha
+          sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > monitor.log 2>&1 &
           
           echo "⏳ Waiting for Tunnel URL..."
           URL=""
@@ -201,7 +196,7 @@ jobs:
             echo "========================================================"
             echo "✅ SUCCESS! MACHINE IS READY"
             echo "🔗 URL: $URL"
-            echo "👤 User: runneradmin"
+            echo "👤 User: sandsneha"
             echo "🔑 Pass: P@ssw0rd123!"
             echo "========================================================"
           fi
