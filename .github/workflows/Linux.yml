@@ -1,4 +1,4 @@
-name: ULTIMATE UBUNTU WORKSTATION VNC2
+name: ULTIMATE UBUNTU WORKSTATION VNC
 on:
   workflow_dispatch:
 
@@ -276,16 +276,45 @@ jobs:
         run: |
           echo "🖥️ Starting VNC server..."
           
+          # Fix permissions for monitor log
+          sudo touch /home/sandsneha/monitor.log
+          sudo chown sandsneha:sandsneha /home/sandsneha/monitor.log
+          
           # Start backup monitor
           sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > /home/sandsneha/monitor.log 2>&1 &
           
+          # Create .Xauthority file to prevent warnings
+          sudo -u sandsneha touch /home/sandsneha/.Xauthority
+          sudo chmod 600 /home/sandsneha/.Xauthority
+          
           # Start VNC server
+          echo "Starting VNC on display :1..."
           sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | tee vnc_start.log
           
-          sleep 5
+          sleep 3
           
-          # Verify VNC started
-          if ! pgrep -f "Xvnc.*:1" > /dev/null; then
+          # Check if VNC is running (multiple detection methods)
+          VNC_RUNNING=false
+          
+          # Method 1: Check for Xtigervnc process
+          if pgrep -f "Xtigervnc" > /dev/null; then
+              VNC_RUNNING=true
+              echo "✅ VNC detected via Xtigervnc process"
+          fi
+          
+          # Method 2: Check for port 5901
+          if [ "$VNC_RUNNING" = false ] && netstat -tuln 2>/dev/null | grep -q ":5901"; then
+              VNC_RUNNING=true
+              echo "✅ VNC detected on port 5901"
+          fi
+          
+          # Method 3: Check VNC log for success message
+          if [ "$VNC_RUNNING" = false ] && grep -q "New.*server.*on port 5901" vnc_start.log; then
+              VNC_RUNNING=true
+              echo "✅ VNC detected via startup log"
+          fi
+          
+          if [ "$VNC_RUNNING" = false ]; then
               echo "❌ VNC failed to start!"
               echo "VNC startup log:"
               cat vnc_start.log
@@ -370,7 +399,8 @@ jobs:
           while true; do
               sleep 30
               
-              if ! pgrep -f "Xvnc.*:1" > /dev/null; then
+              # Restart VNC if needed (check multiple ways)
+              if ! pgrep -f "Xtigervnc" > /dev/null && ! netstat -tuln 2>/dev/null | grep -q ":5901"; then
                   echo "⚠️ VNC restarting..."
                   sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no > /dev/null 2>&1
               fi
