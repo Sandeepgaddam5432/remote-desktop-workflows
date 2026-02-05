@@ -1,0 +1,59 @@
+name: ULTIMATE UBUNTU WORKSTATION
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 🛠️ Setup Cloudflared
+        run: |
+          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+
+      - name: 💻 Install Desktop Environment (GUI)
+        run: |
+          sudo apt-get update
+          # XFCE anedi lightweight desktop environment, GitHub servers meeda fast ga untundi
+          sudo apt-get install -y xfce4 xfce4-goodies xrdp
+          
+          # Configure XRDP to use XFCE
+          echo "xfce4-session" > ~/.xsession
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          
+          # Fix for some permission issues in XRDP
+          sudo adduser xrdp ssl-cert
+
+      - name: 👤 Create User & Password
+        run: |
+          # User: runneradmin
+          # Password: P@ssw0rd123!
+          sudo useradd -m -s /bin/bash runneradmin
+          echo "runneradmin:P@ssw0rd123!" | sudo chpasswd
+          sudo usermod -aG sudo runneradmin
+          echo "✅ User Created Successfully!"
+
+      - name: 🛠️ Install Basic Tools (Optional)
+        run: |
+          # Neeku kavalsina tools ikkada add cheskovachu
+          sudo apt-get install -y firefox git wget unzip
+          echo "✅ Tools Installed!"
+
+      - name: 🚀 Start Tunnel & Keep Alive
+        run: |
+          # RDP Port 3389 ni Cloudflare tho expose chestunnam
+          cloudflared tunnel --url tcp://localhost:3389 --no-autoupdate > tunnel.log 2>&1 &
+          
+          echo "⏳ Waiting for Tunnel URL..."
+          sleep 10
+          
+          # Log nundi URL extract cheyadam
+          grep -o 'tcp://.*\.trycloudflare\.com:[0-9]*' tunnel.log || echo "Check tunnel.log for URL"
+          
+          echo "✅ Machine is Ready! Connect using the URL above."
+          
+          # Machine ni 6 hours varaku run ayyela hold cheyadam
+          while true; do sleep 30; echo "Still Alive..."; done
