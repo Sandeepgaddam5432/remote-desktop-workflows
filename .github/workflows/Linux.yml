@@ -1,11 +1,11 @@
-name: ULTIMATE UBUNTU WORKSTATION
+name: ULTIMATE UBUNTU DEV MACHINE
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # 6 Hours Max Runtime
 
     steps:
       - name: 🛠️ Setup Cloudflared
@@ -13,47 +13,194 @@ jobs:
           curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared.deb
 
-      - name: 💻 Install Desktop Environment (GUI)
+      - name: 💻 Install Desktop Environment (XFCE & XRDP)
         run: |
           sudo apt-get update
-          # XFCE anedi lightweight desktop environment, GitHub servers meeda fast ga untundi
           sudo apt-get install -y xfce4 xfce4-goodies xrdp
-          
-          # Configure XRDP to use XFCE
           echo "xfce4-session" > ~/.xsession
           sudo systemctl enable xrdp
           sudo systemctl start xrdp
-          
-          # Fix for some permission issues in XRDP
+          # Fix Permission Issues
           sudo adduser xrdp ssl-cert
 
       - name: 👤 Create User & Password
         run: |
-          # User: runneradmin
-          # Password: P@ssw0rd123!
+          # User: runneradmin | Pass: P@ssw0rd123!
           sudo useradd -m -s /bin/bash runneradmin
           echo "runneradmin:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo runneradmin
-          echo "✅ User Created Successfully!"
 
-      - name: 🛠️ Install Basic Tools (Optional)
+      - name: 📦 Install Dev Tools (Python, Node, VS Code, Git)
         run: |
-          # Neeku kavalsina tools ikkada add cheskovachu
-          sudo apt-get install -y firefox git wget unzip
-          echo "✅ Tools Installed!"
+          # Install Common Tools
+          sudo apt-get install -y git wget unzip curl software-properties-common
+          
+          # Install Python & Node.js (Latest)
+          sudo apt-get install -y python3 python3-pip nodejs npm
 
-      - name: 🚀 Start Tunnel & Keep Alive
+          # Install VS Code (Snap is easiest on Ubuntu)
+          sudo snap install code --classic
+
+      - name: 🌌 Install Google Antigravity IDE
         run: |
-          # RDP Port 3389 ni Cloudflare tho expose chestunnam
+          echo "Downloading Google Antigravity Keys..."
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/antigravity-repo-key.gpg
+          
+          echo "Adding Repository..."
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
+          
+          echo "Installing Antigravity..."
+          sudo apt-get update
+          sudo apt-get install -y antigravity
+          
+          # Setup Desktop Shortcut for Antigravity
+          echo "[Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Google Antigravity
+          Exec=/usr/bin/antigravity %F
+          Icon=antigravity
+          Terminal=false
+          Categories=Development;IDE;" > /home/runneradmin/Desktop/Antigravity.desktop
+          chmod +x /home/runneradmin/Desktop/Antigravity.desktop
+
+      - name: 🤖 Setup Intelligent Backup System
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          # Configure Git Global
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+          
+          # Paths
+          BASE_DIR="/home/runneradmin/Desktop"
+          SAND_DIR="$BASE_DIR/sand"
+          MASTER_REPO="backup-files"
+          MASTER_PATH="$BASE_DIR/$MASTER_REPO"
+
+          mkdir -p "$SAND_DIR"
+          
+          # Authenticate GH CLI
+          echo $GH_TOKEN | gh auth login --with-token
+
+          # 1. Check/Create Master Repo "backup-files"
+          echo "Checking for Master Repo..."
+          if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
+              echo "✅ Found 'backup-files' repo. Cloning..."
+              gh repo clone "$MASTER_REPO" "$MASTER_PATH"
+          else
+              echo "⚠️ Repo not found. Creating 'backup-files'..."
+              mkdir -p "$MASTER_PATH"
+              cd "$MASTER_PATH"
+              echo "# Backup Files Registry" > README.md
+              git init
+              git add README.md
+              git commit -m "Initial Commit"
+              gh repo create "$MASTER_REPO" --private --source=. --remote=origin --push
+          fi
+
+          # 2. Restore Old Projects from README
+          echo "♻️ Restoring Projects..."
+          if [ -f "$MASTER_PATH/README.md" ]; then
+              cd "$SAND_DIR"
+              # Read each line from README (Expecting format: username/repo)
+              while read -r repo_name; do
+                  if [[ "$repo_name" == *"/"* ]]; then
+                      echo "⬇️ Cloning $repo_name..."
+                      gh repo clone "$repo_name" || echo "Skipping $repo_name (Maybe exists or error)"
+                  fi
+              done < "$MASTER_PATH/README.md"
+          fi
+
+          # 3. Create Monitoring Script
+          echo "Creating Watcher Script..."
+          cat << 'EOF' > /home/runneradmin/monitor_backups.sh
+          #!/bin/bash
+          SAND_DIR="/home/runneradmin/Desktop/sand"
+          MASTER_PATH="/home/runneradmin/Desktop/backup-files"
+          
+          # Git Auth for the script
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+
+          echo "👀 Watching $SAND_DIR for new folders..."
+          
+          while true; do
+              # Loop through directories in 'sand'
+              for d in "$SAND_DIR"/*/; do
+                  [ -d "$d" ] || continue # Check if directory exists
+                  FOLDER_NAME=$(basename "$d")
+                  
+                  # Check if already in README (Already backed up)
+                  if ! grep -q "$FOLDER_NAME" "$MASTER_PATH/README.md"; then
+                      echo "🆕 New Folder Detected: $FOLDER_NAME"
+                      
+                      cd "$d"
+                      if [ ! -d ".git" ]; then
+                          echo "Initializing Git..."
+                          git init
+                          git add .
+                          git commit -m "Auto Backup: Initial"
+                          
+                          echo "🚀 Creating GitHub Repo..."
+                          gh repo create "$FOLDER_NAME" --private --source=. --remote=origin --push
+                          
+                          # Get Full Repo Name (user/repo)
+                          FULL_REPO=$(gh repo view --json dependencyProjects --template '{{.owner.login}}')/"$FOLDER_NAME"
+                          
+                          # Update Master README
+                          echo "📝 Updating Master Registry..."
+                          echo "$FULL_REPO" >> "$MASTER_PATH/README.md"
+                          
+                          # Push Master Registry Update
+                          cd "$MASTER_PATH"
+                          git add README.md
+                          git commit -m "Added $FOLDER_NAME to registry"
+                          git push origin main
+                          
+                          echo "✅ Backup Complete for $FOLDER_NAME"
+                      fi
+                  fi
+              done
+              sleep 5
+          done
+          EOF
+          
+          chmod +x /home/runneradmin/monitor_backups.sh
+
+      - name: 🚀 Start Tunnel & Monitor
+        run: |
+          # Start Cloudflare Tunnel
           cloudflared tunnel --url tcp://localhost:3389 --no-autoupdate > tunnel.log 2>&1 &
           
+          # Start Backup Monitor in Background
+          nohup bash /home/runneradmin/monitor_backups.sh > monitor.log 2>&1 &
+          
           echo "⏳ Waiting for Tunnel URL..."
-          sleep 10
           
-          # Log nundi URL extract cheyadam
-          grep -o 'tcp://.*\.trycloudflare\.com:[0-9]*' tunnel.log || echo "Check tunnel.log for URL"
+          # Loop to wait for URL to appear
+          URL=""
+          for i in {1..30}; do
+            if grep -q "trycloudflare.com" tunnel.log; then
+               URL=$(grep -o 'tcp://.*\.trycloudflare\.com:[0-9]*' tunnel.log | head -n 1)
+               break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$URL" ]; then
+            echo "❌ Could not find URL in logs. Printing last 20 lines:"
+            tail -n 20 tunnel.log
+          else
+            echo ""
+            echo "========================================================"
+            echo "✅ SUCCESS! YOUR UBUNTU MACHINE IS READY"
+            echo "🔗 RDP URL: $URL"
+            echo "👤 User: runneradmin"
+            echo "🔑 Pass: P@ssw0rd123!"
+            echo "========================================================"
+          fi
           
-          echo "✅ Machine is Ready! Connect using the URL above."
-          
-          # Machine ni 6 hours varaku run ayyela hold cheyadam
-          while true; do sleep 30; echo "Still Alive..."; done
+          # Keep Alive
+          while true; do sleep 30; done
