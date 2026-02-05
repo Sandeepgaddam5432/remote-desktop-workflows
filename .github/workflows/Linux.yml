@@ -1,4 +1,4 @@
-name: ULTIMATE UBUNTU WORKSTATION VNC
+name: ULTIMATE UBUNTU WORKSTATION VNC2
 on:
   workflow_dispatch:
 
