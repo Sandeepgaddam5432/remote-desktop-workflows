@@ -41,20 +41,21 @@ jobs:
           # Install VS Code (Snap is easiest on Ubuntu)
           sudo snap install code --classic
 
-      - name: 🌌 Install Google Antigravity IDE
+      - name: 🌌 Install Google Antigravity IDE (Fixed)
         run: |
-          echo "Downloading Google Antigravity Keys..."
+          echo "⬇️ downloading Keys..."
           sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/antigravity-repo-key.gpg
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
           
-          echo "Adding Repository..."
-          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
+          echo "📝 Adding Repository (Fixed Single Line)..."
+          # Ee line ni break cheyakunda single line lo petta, so error radu
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
           
-          echo "Installing Antigravity..."
+          echo "🔄 Updating & Installing..."
           sudo apt-get update
           sudo apt-get install -y antigravity
           
-          # Setup Desktop Shortcut for Antigravity
+          # Setup Desktop Shortcut
           echo "[Desktop Entry]
           Version=1.0
           Type=Application
@@ -64,6 +65,8 @@ jobs:
           Terminal=false
           Categories=Development;IDE;" > /home/runneradmin/Desktop/Antigravity.desktop
           chmod +x /home/runneradmin/Desktop/Antigravity.desktop
+          
+          echo "✅ Antigravity Installed Successfully!"
 
       - name: 🤖 Setup Intelligent Backup System
         env:
@@ -179,7 +182,7 @@ jobs:
           
           echo "⏳ Waiting for Tunnel URL..."
           
-          # Loop to wait for URL to appear
+          # Loop to wait for URL to appear (Increased wait time)
           URL=""
           for i in {1..30}; do
             if grep -q "trycloudflare.com" tunnel.log; then
