@@ -1,100 +1,75 @@
-name: RICH LINUX (SMART GNOME) - FIXED
-
-on:
+name: ubunturdp
+on: 
   workflow_dispatch:
-
+   inputs:
+     auth:
+        description: 'GRDP Authorization Code'
+        required: true
+        default: 'paste your code here'
+  
+defaults:
+  run:
+    shell: bash
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-
+    runs-on: ubuntu-22.04
     steps:
-      - name: Install Cloudflared
-        run: |
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /tmp/cloudflared
-          chmod +x /tmp/cloudflared
-          sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
-
-      - name: Smart GNOME Install (No Bloat)
-        run: |
-          sudo apt-get update
-          
-          # Remove heavy tools that cause hangs
-          sudo apt-get remove -y --purge man-db firewalld ufw || true
-          
-          # Install ONLY the GUI parts of GNOME (Skipping Kernel/System updates)
-          # Using --no-install-recommends to speed up drastically
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            gnome-session gnome-shell gnome-terminal nautilus \
-            dbus-x11 x11-xserver-utils xorg \
-            adwaita-icon-theme-full fonts-cantarell
-          
-          echo "✅ GUI Installed (Lightweight Mode)"
-
-      - name: Install XRDP (Remote Desktop)
-        run: |
-          sudo apt-get install -y --no-install-recommends xrdp
-          sudo adduser xrdp ssl-cert
-          
-          # Configure XRDP to use GNOME
-          echo "gnome-session" > ~/.xsession
-          sudo sed -i 's/3389/3389/g' /etc/xrdp/xrdp.ini
-          sudo systemctl enable xrdp
-          sudo service xrdp start
-
-      - name: Install VS Code & Antigravity (Chrome)
-        run: |
-          # VS Code
-          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-          sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-          echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y code
-
-          # Chrome (for Antigravity)
-          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y ./google-chrome-stable_current_amd64.deb || sudo apt-get install -f -y
-
-          # Desktop Shortcut
-          mkdir -p ~/Desktop
-          cat > ~/Desktop/Antigravity.desktop <<EOF
-          [Desktop Entry]
-          Version=1.0
-          Name=Google Antigravity
-          Exec=google-chrome --app=https://antigravity.google/ --no-sandbox
-          Icon=google-chrome
-          Type=Application
-          EOF
-          chmod +x ~/Desktop/Antigravity.desktop
-
-      - name: Setup User (runner)
-        run: |
-          sudo useradd -m -s /bin/bash runner || true
-          echo "runner:Antigravity2026!" | sudo chpasswd
-          sudo usermod -aG sudo runner
-
-      - name: Start Cloudflare Tunnel (RDP)
-        run: |
-          /usr/local/bin/cloudflared tunnel --url tcp://localhost:3389 > tunnel.log 2>&1 &
-          
-          echo "Waiting for URL..."
-          for i in {1..30}; do
-            sleep 2
-            TUN=$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
-            if [ -n "$TUN" ]; then echo "🌐 Tunnel: $TUN"; break; fi
-          done
-          echo "$TUN" > tunnel_url.txt
-
-      - name: SHOW CONNECT INFO
-        run: |
-          TUN=$(cat tunnel_url.txt)
-          echo "==================================================="
-          echo "   RICH GNOME DESKTOP READY (Smart Version)"
-          echo "==================================================="
-          echo "Command: cloudflared access tcp --hostname ${TUN#https://} --url localhost:3389"
-          echo "User   : runner"
-          echo "Pass   : Antigravity2026!"
-          echo "==================================================="
-
-      - name: Keep Alive
-        run: sleep 21600
+    - name: Creating User to Login
+      run: |
+         sudo useradd -m ash && sudo adduser ash sudo && echo 'ash:ash' | sudo chpasswd
+     
+    - name: Installing Desktop Environment (wait for 10 min)
+      run: sudo apt update && sudo apt install expect ubuntu-desktop
+    - name: Installing Google Chrome Headless
+      run: |
+            sudo useradd -m Ubuntu 
+            sudo adduser Ubuntu sudo
+            echo 'Ubuntu:1234' | sudo chpasswd
+            sudo sed -i 's/\/bin\/sh/\/bin\/bash/g' /etc/passwd
+            sudo apt-get update
+            sudo apt-get install xfce4-terminal -y
+            wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+            sudo dpkg --install chrome-remote-desktop_current_amd64.deb
+            sudo apt install --assume-yes --fix-broken
+            sudo DEBIAN_FRONTEND=noninteractive \
+            apt install --assume-yes xfce4 desktop-base
+            sudo bash -c 'echo "exec /etc/X11/Xsession /usr/bin/xfce4-session" > /etc/chrome-remote-desktop-session'  
+            sudo apt install --assume-yes xscreensaver
+            sudo systemctl disable lightdm.service
+            wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo dpkg --install google-chrome-stable_current_amd64.deb
+            sudo apt install --assume-yes --fix-broken
+            sudo apt update && sudo apt -f install
+            sudo apt install python3-pip -y
+            sudo apt-get install -y xvfb 
+            pip3 install nbformat
+            pip3 install gdown
+            pip3 install pika
+            sudo apt install nautilus nano -y
+            wget -O code.deb https://code.visualstudio.com/sha/download\?build\=stable\&os\=linux-deb-x64
+            sudo dpkg --install code.deb
+            wget https://raw.githubusercontent.com/creationix/nvm/master/install.sh
+            bash install.sh
+            source ~/.profile
+            sudo adduser Ubuntu chrome-remote-desktop
+    - name: generate script
+      run: |
+           touch setup.sh
+           echo "${{ github.event.inputs.auth }}" >> "setup.sh"
+           chmod 777 setup.sh
+    - name: initialize GRDP
+      run: |   
+           expect -c '
+           spawn ./setup.sh
+           expect "Enter a PIN of at least six digits: "
+           send "123456\r"
+           expect "Enter the same PIN again: "
+           send "123456\r"
+           expect eof
+           '
+    - name: Start Cloudflare Tunnel
+      run: |
+        curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+        sudo dpkg -i cloudflared.deb
+        # Idi run ayyaka logs lo trycloudflare link vastundi chusukondi
+        cloudflared tunnel --url ssh://localhost:22
