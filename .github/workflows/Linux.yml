@@ -107,8 +107,7 @@ jobs:
           sudo mkdir -p "$SAND_DIR"
           sudo chown runneradmin:runneradmin "$SAND_DIR"
           
-          echo $GH_TOKEN | gh auth login --with-token
-
+         
           # 1. Check/Create Master Repo
           if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
               gh repo clone "$MASTER_REPO" "$MASTER_PATH"
