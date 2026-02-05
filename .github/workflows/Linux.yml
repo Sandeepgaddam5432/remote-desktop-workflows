@@ -41,12 +41,12 @@ jobs:
           sudo apt-get install -y git wget unzip curl software-properties-common python3 python3-pip nodejs npm
           sudo snap install code --classic
 
-      - name: 🌌 Install Google Antigravity IDE (Smart Install)
+      - name: 🌌 Install Google Antigravity IDE
         continue-on-error: true
         run: |
           echo "Trying to Install Antigravity..."
           
-          # Method 1: Repository Method (Correctly formatted)
+          # Method 1: Repository Method
           echo "⬇️ Downloading Keys..."
           sudo mkdir -p /etc/apt/keyrings
           curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
@@ -55,27 +55,22 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
           
           echo "🔄 Updating Apt..."
-          sudo apt-get update || echo "Apt update failed, trying direct download..."
+          sudo apt-get update || echo "Apt update warning (ignoring)..."
           
-          # Try Installing via APT
+          # Install Package
           if sudo apt-get install -y antigravity; then
               echo "✅ Installed via APT"
           else
-              echo "⚠️ APT Failed. Trying Direct DEB Download..."
-              # Method 2: Direct DEB Download (Fallback)
-              # Note: Since direct link is dynamic, we try a standard assumption or skip if failed
-              wget -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" || echo "Direct link not found"
-              
+              echo "⚠️ APT Failed. Trying Direct Download..."
+              wget -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" || echo "Direct link failed"
               if [ -f "antigravity.deb" ]; then
                   sudo dpkg -i antigravity.deb
-                  sudo apt-get install -f -y # Fix dependencies
+                  sudo apt-get install -f -y
                   echo "✅ Installed via DEB"
-              else
-                  echo "❌ Could not install Antigravity (Package not found in public repo). Skipping..."
               fi
           fi
 
-          # Create Shortcut ONLY if Desktop exists (It should now)
+          # Create Shortcut
           if [ -d "/home/runneradmin/Desktop" ]; then
               echo "[Desktop Entry]
               Version=1.0
@@ -107,8 +102,11 @@ jobs:
           sudo mkdir -p "$SAND_DIR"
           sudo chown runneradmin:runneradmin "$SAND_DIR"
           
-         
+          # 🟢 REMOVED: 'gh auth login' command. 
+          # Environment variable GH_TOKEN works automatically.
+
           # 1. Check/Create Master Repo
+          echo "Checking Master Repo..."
           if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
               gh repo clone "$MASTER_REPO" "$MASTER_PATH"
           else
@@ -139,6 +137,8 @@ jobs:
           #!/bin/bash
           SAND_DIR="/home/runneradmin/Desktop/sand"
           MASTER_PATH="/home/runneradmin/Desktop/backup-files"
+          
+          # Setup Git for this user session
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
 
@@ -146,6 +146,8 @@ jobs:
               for d in "$SAND_DIR"/*/; do
                   [ -d "$d" ] || continue
                   FOLDER_NAME=$(basename "$d")
+                  
+                  # If not in Registry, it's new
                   if ! grep -q "$FOLDER_NAME" "$MASTER_PATH/README.md"; then
                       cd "$d"
                       if [ ! -d ".git" ]; then
@@ -153,8 +155,12 @@ jobs:
                           git add .
                           git commit -m "Auto Backup"
                           gh repo create "$FOLDER_NAME" --private --source=. --remote=origin --push
+                          
+                          # Update Registry
                           FULL_REPO=$(gh repo view --json dependencyProjects --template '{{.owner.login}}')/"$FOLDER_NAME"
                           echo "$FULL_REPO" >> "$MASTER_PATH/README.md"
+                          
+                          # Push Registry Update
                           cd "$MASTER_PATH"
                           git add README.md
                           git commit -m "Added $FOLDER_NAME"
