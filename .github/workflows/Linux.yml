@@ -1,4 +1,4 @@
-name: ULTIMATE UBUNTU WORKSTATION (VNC)
+name: ULTIMATE UBUNTU WORKSTATION VNC
 on:
   workflow_dispatch:
 
@@ -8,49 +8,32 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ========================================
-      # STEP 1: Cloudflared Installation (Parallel)
-      # ========================================
       - name: 🛠️ Setup Cloudflared
         run: |
           echo "📥 Installing Cloudflared..."
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb &
-          CLOUDFLARED_PID=$!
-          echo "CLOUDFLARED_PID=$CLOUDFLARED_PID" >> $GITHUB_ENV
+          sudo dpkg -i cloudflared-linux-amd64.deb
+          echo "✅ Cloudflared installed!"
 
-      # ========================================
-      # STEP 2: Fast VNC Desktop Setup
-      # ========================================
-      - name: 💻 Install VNC Desktop (Lightweight XFCE)
+      - name: 💻 Install VNC Desktop Environment
         run: |
-          echo "📦 Installing VNC & XFCE (optimized)..."
+          echo "📦 Installing VNC & XFCE Desktop..."
           
-          # Wait for cloudflared if still installing
-          wait ${CLOUDFLARED_PID:-} 2>/dev/null || true
-          
-          # Fast parallel installation
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            xfce4 xfce4-terminal \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 xfce4-terminal xfce4-goodies \
             tigervnc-standalone-server tigervnc-common \
             dbus-x11 \
-            git wget curl \
-            python3 python3-pip \
-            nodejs npm &
-          INSTALL_PID=$!
+            git wget curl unzip \
+            python3 python3-pip python3-venv \
+            nodejs npm \
+            build-essential
           
-          echo "⏳ Installing packages in background..."
-          wait $INSTALL_PID
-          
-          echo "✅ VNC Desktop installed!"
+          echo "✅ Desktop environment installed!"
 
-      # ========================================
-      # STEP 3: Quick User Setup & VNC Config
-      # ========================================
       - name: 👤 Create User & Configure VNC
         run: |
-          echo "👤 Setting up user 'sandsneha'..."
+          echo "👤 Creating user 'sandsneha'..."
           
           # Create user
           sudo useradd -m -s /bin/bash sandsneha
@@ -61,94 +44,132 @@ jobs:
           sudo mkdir -p /home/sandsneha/Desktop/sand
           sudo mkdir -p /home/sandsneha/.vnc
           
-          # Set VNC password (fast method)
-          echo "P@ssw0rd123!" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
-          sudo chmod 600 /home/sandsneha/.vnc/passwd
-          
-          # Create VNC startup script (NO FAILSAFE ERRORS!)
-          sudo tee /home/sandsneha/.vnc/xstartup > /dev/null << 'EOF'
-#!/bin/bash
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-export XDG_SESSION_TYPE=x11
-export XDG_CURRENT_DESKTOP=XFCE
-startxfce4 &
-EOF
-          
-          sudo chmod +x /home/sandsneha/.vnc/xstartup
+          # Fix ownership FIRST
           sudo chown -R sandsneha:sandsneha /home/sandsneha
           
-          echo "✅ VNC configured without failsafe issues!"
+          # Set VNC password (Method 1: Using heredoc)
+          echo "🔑 Setting VNC password..."
+          sudo -u sandsneha bash << 'VNCPASS'
+          cd $HOME
+          mkdir -p .vnc
+          echo 'P@ssw0rd123!' | vncpasswd -f > .vnc/passwd
+          chmod 600 .vnc/passwd
+          VNCPASS
+          
+          # Verify password file exists
+          if [ ! -f /home/sandsneha/.vnc/passwd ]; then
+              echo "⚠️ Method 1 failed, trying alternative..."
+              # Method 2: Direct file creation
+              echo -n "P@ssw0rd123!" | sudo -u sandsneha vncpasswd -f > /tmp/vncpass
+              sudo mv /tmp/vncpass /home/sandsneha/.vnc/passwd
+              sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
+              sudo chmod 600 /home/sandsneha/.vnc/passwd
+          fi
+          
+          # Final verification
+          if [ ! -f /home/sandsneha/.vnc/passwd ]; then
+              echo "❌ Failed to create VNC password file!"
+              exit 1
+          fi
+          
+          echo "📝 Configuring VNC startup..."
+          
+          # Create xstartup script
+          sudo -u sandsneha bash << 'XSTARTUP'
+          cat > $HOME/.vnc/xstartup << 'XSTART'
+          #!/bin/bash
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          exec startxfce4
+          XSTART
+          chmod +x $HOME/.vnc/xstartup
+          XSTARTUP
+          
+          # Verify xstartup exists
+          if [ ! -f /home/sandsneha/.vnc/xstartup ]; then
+              echo "❌ Failed to create xstartup file!"
+              exit 1
+          fi
+          
+          # Final ownership check
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
+          
+          echo "✅ User and VNC configured successfully!"
 
-      # ========================================
-      # STEP 4: Fast Development Tools
-      # ========================================
-      - name: 📦 Install Dev Tools (VS Code)
+      - name: 📦 Install VS Code
         run: |
-          echo "🔧 Installing VS Code..."
+          echo "🔧 Installing Visual Studio Code..."
           
-          # Install VS Code (fastest method)
-          sudo snap install code --classic &
-          VSCODE_PID=$!
+          sudo snap install code --classic
           
-          # Git config (while VS Code installs)
           git config --global init.defaultBranch main
           git config --global advice.defaultBranchName false
           
-          wait $VSCODE_PID || echo "VS Code installing..."
-          
-          echo "✅ Dev tools ready!"
+          echo "✅ VS Code installed!"
 
-      # ========================================
-      # STEP 5: Google Antigravity (Quick Install)
-      # ========================================
       - name: 🌌 Install Google Antigravity IDE
         continue-on-error: true
         run: |
-          echo "🚀 Installing Antigravity (fast mode)..."
+          echo "🚀 Installing Google Antigravity IDE..."
           
-          # Try APT first (with timeout)
-          timeout 30s bash << 'APTSCRIPT' || echo "APT timeout, trying DEB..."
+          # Method 1: APT Repository
           sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
-          sudo apt-get update -qq
-          sudo apt-get install -y antigravity
-          APTSCRIPT
           
-          # Fallback: Direct DEB
-          if ! command -v antigravity &> /dev/null; then
-              wget -q -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" &
-              wait $!
-              if [ -f "antigravity.deb" ] && [ -s "antigravity.deb" ]; then
-                  sudo dpkg -i antigravity.deb 2>/dev/null || true
-                  sudo apt-get install -f -y -qq
+          if curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg 2>/dev/null | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg 2>/dev/null; then
+              echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+              
+              sudo apt-get update -qq 2>/dev/null || true
+              
+              if sudo apt-get install -y antigravity 2>/dev/null; then
+                  echo "✅ Antigravity installed via APT!"
+                  AG_OK=true
+              else
+                  AG_OK=false
+              fi
+          else
+              AG_OK=false
+          fi
+          
+          # Method 2: Direct DEB download
+          if [ "$AG_OK" != true ]; then
+              echo "⚠️ APT failed, trying direct download..."
+              
+              if wget -q -O /tmp/antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" 2>/dev/null; then
+                  if [ -s /tmp/antigravity.deb ]; then
+                      sudo dpkg -i /tmp/antigravity.deb 2>/dev/null || true
+                      sudo apt-get install -f -y 2>/dev/null || true
+                      
+                      if command -v antigravity &> /dev/null; then
+                          echo "✅ Antigravity installed via DEB!"
+                          AG_OK=true
+                      fi
+                  fi
               fi
           fi
           
-          # Create shortcut if installed
-          if command -v antigravity &> /dev/null; then
-              sudo tee /home/sandsneha/Desktop/Antigravity.desktop > /dev/null << 'EOF'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Antigravity IDE
-Exec=antigravity
-Icon=applications-development
-Terminal=false
-Categories=Development;
-EOF
-              sudo chmod +x /home/sandsneha/Desktop/Antigravity.desktop
-              sudo chown sandsneha:sandsneha /home/sandsneha/Desktop/Antigravity.desktop
-              echo "✅ Antigravity installed!"
+          # Create desktop shortcut
+          if [ "$AG_OK" = true ] && command -v antigravity &> /dev/null; then
+              sudo -u sandsneha bash << 'AGDESK'
+              cat > $HOME/Desktop/Antigravity.desktop << 'DESK'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Antigravity IDE
+          Exec=antigravity
+          Icon=applications-development
+          Terminal=false
+          Categories=Development;IDE;
+          DESK
+              chmod +x $HOME/Desktop/Antigravity.desktop
+              AGDESK
+              echo "✅ Antigravity desktop shortcut created!"
           else
-              echo "⚠️ Antigravity skipped"
+              echo "⚠️ Antigravity installation skipped (optional)"
           fi
 
-      # ========================================
-      # STEP 6: Backup System (Optimized)
-      # ========================================
-      - name: 🤖 Setup Backup System
+      - name: 🤖 Setup Intelligent Backup System
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -156,113 +177,132 @@ EOF
           
           git config --global user.name "AutoBackupBot"
           git config --global user.email "bot@backup.com"
+          git config --global init.defaultBranch main
           
           BASE_DIR="/home/sandsneha/Desktop"
           SAND_DIR="$BASE_DIR/sand"
           MASTER_REPO="backup-files"
           MASTER_PATH="$BASE_DIR/$MASTER_REPO"
           
-          # Quick repo check
+          sudo mkdir -p "$SAND_DIR"
+          
+          # Initialize or clone master repository
           if gh repo view "$MASTER_REPO" &> /dev/null; then
-              gh repo clone "$MASTER_REPO" "$MASTER_PATH" -- --depth=1 &
+              echo "📥 Cloning existing backup registry..."
+              gh repo clone "$MASTER_REPO" "$MASTER_PATH" -- --depth=1 2>/dev/null || mkdir -p "$MASTER_PATH"
           else
+              echo "📝 Creating new backup registry..."
               mkdir -p "$MASTER_PATH"
               cd "$MASTER_PATH"
-              echo "# Backup Registry" > README.md
+              echo "# Backup Files Registry" > README.md
+              echo "# Auto-managed by backup system" >> README.md
               git init -q
               git add README.md
-              git commit -q -m "Init"
-              gh repo create "$MASTER_REPO" --private --source=. --push &
+              git commit -q -m "Initial commit"
+              gh repo create "$MASTER_REPO" --private --source=. --push 2>/dev/null || echo "⚠️ Repo creation skipped"
           fi
           
-          # Restore projects (background)
+          # Restore existing projects
           if [ -f "$MASTER_PATH/README.md" ]; then
+              echo "♻️ Restoring backed up projects..."
               cd "$SAND_DIR"
               grep -E "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$" "$MASTER_PATH/README.md" 2>/dev/null | while read -r repo; do
-                  gh repo clone "$repo" -- --depth=1 &
+                  if [ -n "$repo" ]; then
+                      echo "  → $repo"
+                      gh repo clone "$repo" -- --depth=1 2>/dev/null || true
+                  fi
               done
           fi
           
-          # Efficient monitor script
-          sudo tee /home/sandsneha/monitor_backups.sh > /dev/null << 'EOFSCRIPT'
-#!/bin/bash
-SAND_DIR="/home/sandsneha/Desktop/sand"
-MASTER_PATH="/home/sandsneha/Desktop/backup-files"
-SLEEP_TIME=60  # Check every 60 seconds
-
-git config --global user.name "AutoBackupBot"
-git config --global user.email "bot@backup.com"
-git config --global init.defaultBranch main
-
-while true; do
-    [ ! -d "$SAND_DIR" ] && sleep $SLEEP_TIME && continue
-    
-    for folder in "$SAND_DIR"/*; do
-        [ ! -d "$folder" ] && continue
-        NAME=$(basename "$folder")
-        [[ "$NAME" == .* || "$NAME" == "backup-files" ]] && continue
-        
-        if ! grep -qF "$NAME" "$MASTER_PATH/README.md" 2>/dev/null; then
-            cd "$folder"
-            if [ ! -d ".git" ]; then
-                git init -q
-                git add . 2>/dev/null
-                git commit -q -m "Auto backup" || continue
-                
-                if gh repo create "$NAME" --private --source=. --push 2>/dev/null; then
-                    OWNER=$(gh api user --jq '.login' 2>/dev/null || echo "user")
-                    echo "$OWNER/$NAME" >> "$MASTER_PATH/README.md"
-                    cd "$MASTER_PATH"
-                    git add README.md
-                    git commit -q -m "Added $NAME" 2>/dev/null
-                    git push -q 2>/dev/null || true
-                fi
-            fi
-        fi
-    done
-    sleep $SLEEP_TIME
-done
-EOFSCRIPT
+          # Create monitoring script
+          echo "📜 Creating backup monitor..."
+          sudo -u sandsneha bash << 'MONITOR'
+          cat > $HOME/monitor_backups.sh << 'MONSCRIPT'
+          #!/bin/bash
+          SAND_DIR="/home/sandsneha/Desktop/sand"
+          MASTER_PATH="/home/sandsneha/Desktop/backup-files"
+          CHECK_INTERVAL=60
           
-          sudo chmod +x /home/sandsneha/monitor_backups.sh
-          sudo chown sandsneha:sandsneha /home/sandsneha/monitor_backups.sh
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+          git config --global init.defaultBranch main
           
-          # Wait for background tasks
-          wait
+          echo "🔄 Backup monitor started"
+          
+          while true; do
+              [ ! -d "$SAND_DIR" ] || [ ! -d "$MASTER_PATH" ] && sleep $CHECK_INTERVAL && continue
+              
+              for folder in "$SAND_DIR"/*; do
+                  [ ! -d "$folder" ] && continue
+                  
+                  NAME=$(basename "$folder")
+                  [[ "$NAME" == .* || "$NAME" == "backup-files" ]] && continue
+                  
+                  if ! grep -qF "$NAME" "$MASTER_PATH/README.md" 2>/dev/null; then
+                      echo "📦 New: $NAME"
+                      cd "$folder" || continue
+                      
+                      if [ ! -d ".git" ]; then
+                          git init -q
+                          git add . 2>/dev/null
+                          
+                          if git commit -q -m "Auto backup" 2>/dev/null; then
+                              if gh repo create "$NAME" --private --source=. --push 2>/dev/null; then
+                                  OWNER=$(gh api user --jq '.login' 2>/dev/null || echo "user")
+                                  echo "$OWNER/$NAME" >> "$MASTER_PATH/README.md"
+                                  
+                                  cd "$MASTER_PATH"
+                                  git add README.md
+                                  git commit -q -m "Added $NAME" 2>/dev/null
+                                  git push -q 2>/dev/null || true
+                                  
+                                  echo "  ✅ Backed up: $OWNER/$NAME"
+                              fi
+                          fi
+                      fi
+                  fi
+              done
+              sleep $CHECK_INTERVAL
+          done
+          MONSCRIPT
+          chmod +x $HOME/monitor_backups.sh
+          MONITOR
+          
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
           
           echo "✅ Backup system ready!"
 
-      # ========================================
-      # STEP 7: Start VNC & Tunnel (FAST!)
-      # ========================================
       - name: 🚀 Start VNC Server & Cloudflare Tunnel
         run: |
           echo "🖥️ Starting VNC server..."
           
-          # Set ownership
-          sudo chown -R sandsneha:sandsneha /home/sandsneha
+          # Start backup monitor
+          sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > /home/sandsneha/monitor.log 2>&1 &
           
-          # Start backup monitor (background)
-          sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > /dev/null 2>&1 &
+          # Start VNC server
+          sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no 2>&1 | tee vnc_start.log
           
-          # Start VNC server on display :1 (port 5901)
-          sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 > /dev/null 2>&1
+          sleep 5
           
-          # Wait for VNC to be ready
-          sleep 3
+          # Verify VNC started
+          if ! pgrep -f "Xvnc.*:1" > /dev/null; then
+              echo "❌ VNC failed to start!"
+              echo "VNC startup log:"
+              cat vnc_start.log
+              exit 1
+          fi
           
+          echo "✅ VNC server running on port 5901"
+          
+          # Start Cloudflare tunnel
           echo "🌐 Starting Cloudflare Tunnel..."
-          # Start tunnel for VNC port 5901
           cloudflared tunnel --url tcp://localhost:5901 --no-autoupdate --logfile tunnel.log > /dev/null 2>&1 &
           
           echo ""
-          echo "⏳ Waiting for tunnel URL..."
+          echo "⏳ Waiting for tunnel..."
           
-          # Quick URL detection (30 second timeout)
-          MAX_WAIT=30
+          MAX_WAIT=60
           COUNT=0
-          TUNNEL_URL=""
-          HOSTNAME=""
           
           while [ $COUNT -lt $MAX_WAIT ]; do
               if [ -f "tunnel.log" ]; then
@@ -274,40 +314,40 @@ EOFSCRIPT
                       echo ""
                       echo "╔════════════════════════════════════════════════════════════════╗"
                       echo "║                                                                ║"
-                      echo "║          ✅ VNC WORKSTATION READY - ULTRA FAST SETUP           ║"
+                      echo "║          ✅ VNC WORKSTATION READY - ZERO ERRORS!               ║"
                       echo "║                                                                ║"
                       echo "╟────────────────────────────────────────────────────────────────╢"
                       echo "║  🌐 TUNNEL URL:                                                ║"
                       echo "║     $TUNNEL_URL                            ║"
                       echo "║                                                                ║"
-                      echo "║  🔑 VNC PASSWORD: P@ssw0rd123!                                 ║"
                       echo "║  👤 USERNAME: sandsneha                                        ║"
+                      echo "║  🔑 PASSWORD: P@ssw0rd123!                                     ║"
                       echo "║                                                                ║"
                       echo "╟────────────────────────────────────────────────────────────────╢"
-                      echo "║  🖥️  LOCAL VNC CONNECTION COMMAND:                             ║"
+                      echo "║  🖥️  LOCAL CONNECTION COMMAND:                                 ║"
                       echo "║                                                                ║"
                       echo "║  cloudflared access tcp --hostname $HOSTNAME --url 127.0.0.1:5901  ║"
                       echo "║                                                                ║"
                       echo "╟────────────────────────────────────────────────────────────────╢"
                       echo "║  📝 HOW TO CONNECT:                                            ║"
                       echo "║                                                                ║"
-                      echo "║  STEP 1: Copy and run the command above in local terminal     ║"
-                      echo "║  STEP 2: Open your VNC viewer (RealVNC, TigerVNC, etc)        ║"
-                      echo "║  STEP 3: Connect to: 127.0.0.1:5901                            ║"
-                      echo "║  STEP 4: Enter password: P@ssw0rd123!                          ║"
+                      echo "║  1. Run the command above in your LOCAL terminal               ║"
+                      echo "║  2. Open VNC Viewer (RealVNC/TigerVNC/UltraVNC)                ║"
+                      echo "║  3. Connect to: 127.0.0.1:5901                                 ║"
+                      echo "║  4. Enter VNC password: P@ssw0rd123!                           ║"
                       echo "║                                                                ║"
-                      echo "║  🎨 DISPLAY: 1920x1080 @ 24-bit color                          ║"
-                      echo "║  🖼️  DESKTOP: XFCE4 (No failsafe errors!)                      ║"
+                      echo "║  🎨 Resolution: 1920x1080 @ 24-bit                             ║"
+                      echo "║  🖼️  Desktop: XFCE4 (Perfect, no failsafe errors!)             ║"
                       echo "║                                                                ║"
                       echo "╚════════════════════════════════════════════════════════════════╝"
                       echo ""
                       
-                      # Show installed software
                       echo "📦 Installed Software:"
-                      echo "   ✓ Python $(python3 --version 2>&1 | cut -d' ' -f2)"
-                      echo "   ✓ Node.js $(node --version 2>&1)"
-                      echo "   ✓ VS Code"
-                      command -v antigravity &> /dev/null && echo "   ✓ Google Antigravity IDE" || echo "   ⚠ Antigravity (installation skipped)"
+                      python3 --version
+                      node --version
+                      npm --version
+                      echo "   ✅ VS Code"
+                      command -v antigravity &> /dev/null && echo "   ✅ Antigravity IDE" || echo "   ⚠️  Antigravity (optional, skipped)"
                       echo ""
                       
                       break
@@ -316,36 +356,27 @@ EOFSCRIPT
               
               sleep 1
               COUNT=$((COUNT+1))
+              [ $((COUNT % 10)) -eq 0 ] && echo "  ⏳ ${COUNT}s elapsed..."
           done
           
-          # Error handling
           if [ -z "$TUNNEL_URL" ]; then
-              echo ""
-              echo "❌ ERROR: Tunnel URL not detected within ${MAX_WAIT}s"
-              echo ""
-              echo "📋 Tunnel Log:"
-              echo "═══════════════════════════════════════════"
-              cat tunnel.log 2>/dev/null || echo "No log file found"
-              echo "═══════════════════════════════════════════"
-              echo ""
-              echo "🔍 VNC Server Status:"
-              ps aux | grep vnc | grep -v grep || echo "VNC not running"
-              echo ""
-              echo "📡 Cloudflared Status:"
-              ps aux | grep cloudflared | grep -v grep || echo "Cloudflared not running"
+              echo "❌ Tunnel URL not found!"
+              cat tunnel.log
+              exit 1
           fi
           
-          # Keep alive
-          echo "🔄 Session active. Workflow will run until timeout..."
+          echo "🔄 Keeping session alive with auto-restart..."
+          
           while true; do
               sleep 30
-              # Health check
+              
               if ! pgrep -f "Xvnc.*:1" > /dev/null; then
-                  echo "⚠️ VNC died, restarting..."
-                  sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 > /dev/null 2>&1
+                  echo "⚠️ VNC restarting..."
+                  sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no > /dev/null 2>&1
               fi
+              
               if ! pgrep cloudflared > /dev/null; then
-                  echo "⚠️ Cloudflared died, restarting..."
+                  echo "⚠️ Cloudflared restarting..."
                   cloudflared tunnel --url tcp://localhost:5901 --no-autoupdate --logfile tunnel.log > /dev/null 2>&1 &
               fi
           done
