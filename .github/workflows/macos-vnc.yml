@@ -1,267 +1,273 @@
-name: macOS VNC - Port 5900/5901 Flexible
-
+name: ULTIMATE UBUNTU WORKSTATION VNC
 on:
   workflow_dispatch:
-    inputs:
-      password:
-        description: 'VNC Password'
-        required: false
-        default: 'P@ssw0rd123!'
-      vnc_port:
-        description: 'VNC Port (5900 or 5901)'
-        required: false
-        default: '5900'
-  push:
-    branches: [ main ]
 
 jobs:
-  macos-desktop:
-    runs-on: macos-latest
+  build:
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: System Info
+      - name: 🛠️ Setup Cloudflared
         run: |
-          mkdir -p logs
-          sw_vers | tee logs/system.txt
-          whoami | tee -a logs/system.txt
-          echo "✅ System ready"
+          echo "📥 Installing Cloudflared..."
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb &
+          CLOUDFLARED_PID=$!
+          echo "CLOUDFLARED_PID=$CLOUDFLARED_PID" >> $GITHUB_ENV
+          echo "✅ Cloudflared installing..."
 
-      - name: Install Cloudflared
+      - name: 💻 Install VNC Desktop
         run: |
-          brew install cloudflare/cloudflare/cloudflared
-          cloudflared --version
+          echo "📦 Installing VNC & XFCE..."
+          wait ${CLOUDFLARED_PID:-} 2>/dev/null || true
+          
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xfce4 xfce4-terminal \
+            tigervnc-standalone-server tigervnc-common \
+            dbus-x11 \
+            git wget curl \
+            python3 python3-pip \
+            nodejs npm &
+          INSTALL_PID=$!
+          
+          echo "⏳ Installing packages..."
+          wait $INSTALL_PID
+          echo "✅ VNC Desktop installed!"
 
-      - name: Enable Screen Sharing (Port 5900)
+      - name: 👤 Create User & Configure VNC
         run: |
-          PASSWORD="${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
+          echo "👤 Setting up user..."
+          sudo useradd -m -s /bin/bash sandsneha
+          echo "sandsneha:P@ssw0rd123!" | sudo chpasswd
+          sudo usermod -aG sudo sandsneha
           
-          # Method 1: Enable built-in Screen Sharing (uses port 5900)
-          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist \
-            com.apple.screensharing -dict Disabled -bool false
+          sudo mkdir -p /home/sandsneha/Desktop/sand
+          sudo mkdir -p /home/sandsneha/.vnc
           
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          echo "P@ssw0rd123!" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
+          sudo chmod 600 /home/sandsneha/.vnc/passwd
           
-          # Method 2: Enable ARD (also uses port 5900)
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -restart -agent -privs -all \
-            -allowAccessFor -allUsers -clientopts -setvnclegacy -vnclegacy yes \
-            -setvncpw -vncpw "$PASSWORD"
+          sudo -u sandsneha tee /home/sandsneha/.vnc/xstartup > /dev/null <<'VNCSTART'
+          #!/bin/bash
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          startxfce4 &
+          VNCSTART
           
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist \
-            VNCAlwaysStartOnConsole -bool true
-          
-          sleep 5
-          echo "✅ Screen sharing services enabled"
+          sudo chmod +x /home/sandsneha/.vnc/xstartup
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
+          echo "✅ VNC configured!"
 
-      - name: Start VNC Server Manually (Port 5901 fallback)
+      - name: 📦 Install VS Code
         run: |
-          # If port 5900 is not available, start osxvnc on 5901
-          if ! lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
-            echo "⚠️ Port 5900 not available, using port 5901"
-            
-            # Install OSXvnc-server for custom port support
-            brew install --cask osxvnc-server 2>/dev/null || true
-            
-            # Alternative: Use built-in VNC but force port
-            sudo defaults write /Library/Preferences/com.apple.screensharing \
-              VNCServerPort -int 5901
-            
-            sudo launchctl unload /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-            sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-            
-            sleep 5
+          echo "🔧 Installing VS Code..."
+          sudo snap install code --classic &
+          VSCODE_PID=$!
+          
+          git config --global init.defaultBranch main
+          git config --global advice.defaultBranchName false
+          
+          wait $VSCODE_PID || echo "VS Code installed"
+          echo "✅ Dev tools ready!"
+
+      - name: 🌌 Install Antigravity IDE
+        continue-on-error: true
+        run: |
+          echo "🚀 Installing Antigravity..."
+          
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg 2>/dev/null | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg 2>/dev/null || true
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+          
+          sudo apt-get update -qq 2>/dev/null || true
+          sudo apt-get install -y antigravity 2>/dev/null && AG_OK=true || AG_OK=false
+          
+          if [ "$AG_OK" = false ]; then
+              wget -q -O /tmp/ag.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" 2>/dev/null || true
+              if [ -f "/tmp/ag.deb" ] && [ -s "/tmp/ag.deb" ]; then
+                  sudo dpkg -i /tmp/ag.deb 2>/dev/null || true
+                  sudo apt-get install -f -y -qq 2>/dev/null || true
+              fi
           fi
           
-          echo "✅ VNC server configuration complete"
-
-      - name: Disable Sleep & Locks
-        run: |
-          sudo pmset -a sleep 0 displaysleep 0 disablesleep 1
-          sudo defaults write /Library/Preferences/com.apple.screensaver askForPassword -int 0
-          echo "✅ Power settings configured"
-
-      - name: Force WindowServer & GUI
-        run: |
-          # Ensure WindowServer is running
-          if ! pgrep -x "WindowServer" > /dev/null; then
-            sudo launchctl kickstart -k system/com.apple.WindowServer
-            sleep 5
+          if command -v antigravity &> /dev/null; then
+              sudo -u sandsneha tee /home/sandsneha/Desktop/Antigravity.desktop > /dev/null <<'AGDESK'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Antigravity IDE
+          Exec=antigravity
+          Icon=applications-development
+          Terminal=false
+          Categories=Development;
+          AGDESK
+              sudo chmod +x /home/sandsneha/Desktop/Antigravity.desktop
+              echo "✅ Antigravity installed!"
           fi
-          
-          # Trigger loginwindow for GUI session
-          sudo launchctl kickstart -k system/com.apple.loginwindow
-          sleep 3
-          
-          echo "✅ GUI initialized"
 
-      - name: Launch Desktop Apps
+      - name: 🤖 Setup Backup System
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          # Wait for WindowServer
-          for i in {1..10}; do
-            if pgrep -x "WindowServer" > /dev/null; then
-              echo "✅ WindowServer running"
-              break
-            fi
-            sleep 2
-          done
+          echo "🔧 Configuring backup..."
           
-          # Launch visible applications
-          open -a Finder &
-          sleep 2
-          open -a TextEdit &
-          sleep 2
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
           
-          # Create welcome window
-          /usr/bin/osascript -e '
-          tell application "TextEdit"
-            activate
-            delay 1
-            make new document
-            set text of document 1 to "🖥️ VNC Desktop Active
-
-✅ Connection Ready
-👤 User: runner
-🔑 Check workflow output for password
-
-This confirms desktop is visible."
-          end tell
-          ' &
+          BASE_DIR="/home/sandsneha/Desktop"
+          SAND_DIR="$BASE_DIR/sand"
+          MASTER_REPO="backup-files"
+          MASTER_PATH="$BASE_DIR/$MASTER_REPO"
           
-          sleep 3
-          echo "✅ Desktop apps launched"
-
-      - name: Detect VNC Port
-        id: detect_port
-        run: |
-          VNC_PORT=""
-          
-          # Check port 5900 first
-          if lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
-            VNC_PORT="5900"
-            echo "✅ VNC on port 5900"
-          # Check port 5901 fallback
-          elif lsof -nP -iTCP:5901 -sTCP:LISTEN >/dev/null 2>&1; then
-            VNC_PORT="5901"
-            echo "✅ VNC on port 5901"
-          # Try one more time to start on 5900
+          if gh repo view "$MASTER_REPO" &> /dev/null; then
+              gh repo clone "$MASTER_REPO" "$MASTER_PATH" -- --depth=1 &
           else
-            echo "⚠️ No VNC port detected, forcing restart..."
-            sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -restart -agent
-            sleep 5
-            
-            if lsof -nP -iTCP:5900 -sTCP:LISTEN >/dev/null 2>&1; then
-              VNC_PORT="5900"
-            elif lsof -nP -iTCP:5901 -sTCP:LISTEN >/dev/null 2>&1; then
-              VNC_PORT="5901"
-            fi
+              mkdir -p "$MASTER_PATH"
+              cd "$MASTER_PATH"
+              echo "# Backup Registry" > README.md
+              git init -q
+              git add README.md
+              git commit -q -m "Init"
+              gh repo create "$MASTER_REPO" --private --source=. --push &
           fi
           
-          if [ -z "$VNC_PORT" ]; then
-            echo "❌ VNC failed to start on any port"
-            echo "=== Debug Info ==="
-            ps aux | grep -E 'screensharingd|ARDAgent' | grep -v grep
-            lsof -nP -iTCP -sTCP:LISTEN | grep -E '590[0-9]'
-            exit 1
+          if [ -f "$MASTER_PATH/README.md" ]; then
+              cd "$SAND_DIR"
+              grep -E "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$" "$MASTER_PATH/README.md" 2>/dev/null | while read -r repo; do
+                  gh repo clone "$repo" -- --depth=1 &
+              done
           fi
           
-          echo "vnc_port=$VNC_PORT" >> $GITHUB_OUTPUT
-          echo "VNC_PORT=$VNC_PORT" > logs/vnc_port.txt
+          sudo -u sandsneha tee /home/sandsneha/monitor_backups.sh > /dev/null <<'MONITORSCRIPT'
+          #!/bin/bash
+          SAND_DIR="/home/sandsneha/Desktop/sand"
+          MASTER_PATH="/home/sandsneha/Desktop/backup-files"
           
-          # Show listening info
-          lsof -nP -iTCP:$VNC_PORT -sTCP:LISTEN
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+          git config --global init.defaultBranch main
           
-          echo "✅ VNC confirmed on port $VNC_PORT"
+          while true; do
+              [ ! -d "$SAND_DIR" ] && sleep 60 && continue
+              
+              for folder in "$SAND_DIR"/*; do
+                  [ ! -d "$folder" ] && continue
+                  NAME=$(basename "$folder")
+                  [[ "$NAME" == .* || "$NAME" == "backup-files" ]] && continue
+                  
+                  if ! grep -qF "$NAME" "$MASTER_PATH/README.md" 2>/dev/null; then
+                      cd "$folder"
+                      if [ ! -d ".git" ]; then
+                          git init -q
+                          git add . 2>/dev/null
+                          git commit -q -m "Auto backup" || continue
+                          
+                          if gh repo create "$NAME" --private --source=. --push 2>/dev/null; then
+                              OWNER=$(gh api user --jq '.login' 2>/dev/null || echo "user")
+                              echo "$OWNER/$NAME" >> "$MASTER_PATH/README.md"
+                              cd "$MASTER_PATH"
+                              git add README.md
+                              git commit -q -m "Added $NAME" 2>/dev/null
+                              git push -q 2>/dev/null || true
+                          fi
+                      fi
+                  fi
+              done
+              sleep 60
+          done
+          MONITORSCRIPT
+          
+          sudo chmod +x /home/sandsneha/monitor_backups.sh
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
+          
+          wait
+          echo "✅ Backup system ready!"
 
-      - name: Start Cloudflare Tunnel
+      - name: 🚀 Start VNC & Tunnel
         run: |
-          VNC_PORT=$(cat logs/vnc_port.txt)
+          echo "🖥️ Starting VNC..."
           
-          cloudflared tunnel --url tcp://localhost:$VNC_PORT > tunnel.log 2>&1 &
-          TUNNEL_PID=$!
+          sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > /dev/null 2>&1 &
           
-          sleep 20
+          sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 > /dev/null 2>&1
+          sleep 3
           
-          if ! kill -0 $TUNNEL_PID 2>/dev/null; then
-            echo "❌ Tunnel failed"
-            cat tunnel.log
-            exit 1
-          fi
+          echo "🌐 Starting Cloudflare Tunnel..."
+          cloudflared tunnel --url tcp://localhost:5901 --no-autoupdate --logfile tunnel.log > /dev/null 2>&1 &
           
-          TUNNEL_URL=$(grep -o 'https://[^[:space:]]*trycloudflare.com' tunnel.log | head -1)
+          echo ""
+          echo "⏳ Waiting for tunnel URL..."
+          
+          MAX_WAIT=30
+          COUNT=0
+          
+          while [ $COUNT -lt $MAX_WAIT ]; do
+              if [ -f "tunnel.log" ]; then
+                  TUNNEL_URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" tunnel.log | head -n 1)
+                  
+                  if [ -n "$TUNNEL_URL" ]; then
+                      HOSTNAME=$(echo "$TUNNEL_URL" | sed 's|https://||')
+                      
+                      echo ""
+                      echo "╔════════════════════════════════════════════════════════════════╗"
+                      echo "║                                                                ║"
+                      echo "║          ✅ VNC WORKSTATION READY - ULTRA FAST SETUP           ║"
+                      echo "║                                                                ║"
+                      echo "╟────────────────────────────────────────────────────────────────╢"
+                      echo "║  🌐 TUNNEL URL:                                                ║"
+                      echo "║     $TUNNEL_URL                            ║"
+                      echo "║                                                                ║"
+                      echo "║  🔑 VNC PASSWORD: P@ssw0rd123!                                 ║"
+                      echo "║  👤 USERNAME: sandsneha                                        ║"
+                      echo "║                                                                ║"
+                      echo "╟────────────────────────────────────────────────────────────────╢"
+                      echo "║  🖥️  LOCAL VNC CONNECTION COMMAND:                             ║"
+                      echo "║                                                                ║"
+                      echo "║  cloudflared access tcp --hostname $HOSTNAME --url 127.0.0.1:5901  ║"
+                      echo "║                                                                ║"
+                      echo "╟────────────────────────────────────────────────────────────────╢"
+                      echo "║  📝 HOW TO CONNECT:                                            ║"
+                      echo "║                                                                ║"
+                      echo "║  STEP 1: Copy command above and run in local terminal         ║"
+                      echo "║  STEP 2: Open VNC viewer (RealVNC, TigerVNC, etc)             ║"
+                      echo "║  STEP 3: Connect to: 127.0.0.1:5901                            ║"
+                      echo "║  STEP 4: Enter password: P@ssw0rd123!                          ║"
+                      echo "║                                                                ║"
+                      echo "║  🎨 DISPLAY: 1920x1080 @ 24-bit color                          ║"
+                      echo "║  🖼️  DESKTOP: XFCE4 (No failsafe errors!)                      ║"
+                      echo "║                                                                ║"
+                      echo "╚════════════════════════════════════════════════════════════════╝"
+                      echo ""
+                      
+                      echo "📦 Installed Software:"
+                      echo "   ✓ Python $(python3 --version 2>&1 | cut -d' ' -f2)"
+                      echo "   ✓ Node.js $(node --version 2>&1)"
+                      echo "   ✓ VS Code"
+                      command -v antigravity &> /dev/null && echo "   ✓ Antigravity IDE" || echo "   ⚠ Antigravity (skipped)"
+                      echo ""
+                      
+                      break
+                  fi
+              fi
+              
+              sleep 1
+              COUNT=$((COUNT+1))
+          done
           
           if [ -z "$TUNNEL_URL" ]; then
-            echo "❌ No tunnel URL"
-            tail -50 tunnel.log
-            exit 1
+              echo ""
+              echo "❌ ERROR: Tunnel URL not detected"
+              echo ""
+              cat tunnel.log 2>/dev/null || echo "No tunnel log"
           fi
           
-          echo "TUNNEL_URL=$TUNNEL_URL" >> logs/connection.txt
-          echo "✅ Tunnel: $TUNNEL_URL → localhost:$VNC_PORT"
-
-      - name: Connection Instructions
-        run: |
-          TUNNEL_URL=$(grep 'TUNNEL_URL=' logs/connection.txt | cut -d'=' -f2)
-          VNC_PORT=$(cat logs/vnc_port.txt)
-          
-          echo "╔════════════════════════════════════════════════╗"
-          echo "║      🖥️  macOS VNC READY                      ║"
-          echo "╚════════════════════════════════════════════════╝"
-          echo ""
-          echo "📡 VNC Address: ${TUNNEL_URL#https://}:$VNC_PORT"
-          echo "🔑 Password: ${{ github.event.inputs.password || 'P@ssw0rd123!' }}"
-          echo "👤 Username: runner"
-          echo "🔌 VNC Port: $VNC_PORT"
-          echo ""
-          echo "📱 Recommended Clients:"
-          echo "   • RealVNC Viewer"
-          echo "   • TightVNC"
-          echo "   • macOS Screen Sharing"
-          echo ""
-          echo "⏰ Session active for 6 hours"
-          echo "╚════════════════════════════════════════════════╝"
-
-      - name: Keep Alive
-        run: |
-          VNC_PORT=$(cat logs/vnc_port.txt)
-          
-          for i in {1..360}; do
-            sleep 60
-            echo "✓ Min $i/360"
-            
-            # Every 3 min: health check
-            if [ $((i % 3)) -eq 0 ]; then
-              pgrep -x "WindowServer" > /dev/null && echo "✅ WS" || echo "⚠️ WS"
-              lsof -nP -iTCP:$VNC_PORT -sTCP:LISTEN > /dev/null && echo "✅ VNC:$VNC_PORT" || echo "⚠️ VNC"
-            fi
-            
-            # Every 5 min: wake
-            if [ $((i % 5)) -eq 0 ]; then
-              caffeinate -u -t 2 &
-            fi
-            
-            # Every 10 min: refresh
-            if [ $((i % 10)) -eq 0 ]; then
-              open -a Finder &
-              /usr/bin/osascript -e 'tell app "System Events" to keystroke tab' 2>/dev/null || true
-            fi
-            
-            # Every 15 min: logs
-            if [ $((i % 15)) -eq 0 ]; then
-              cp tunnel.log logs/ 2>/dev/null || true
-              ps aux | grep -E 'WindowServer|screensharing' > logs/processes.txt 2>/dev/null || true
-            fi
+          echo "🔄 Keeping session alive..."
+          while true; do
+              sleep 30
+              pgrep -f "Xvnc.*:1" > /dev/null || sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 > /dev/null 2>&1
+              pgrep cloudflared > /dev/null || cloudflared tunnel --url tcp://localhost:5901 --no-autoupdate --logfile tunnel.log > /dev/null 2>&1 &
           done
-
-      - name: Upload Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vnc-logs
-          path: |
-            logs/**
-            tunnel.log
-          retention-days: 2
