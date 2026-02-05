@@ -24,27 +24,22 @@ jobs:
 
       - name: 👤 Create User 'sandsneha' & Unlock Permissions
         run: |
-          # 1. Create User "sandsneha"
           sudo useradd -m -s /bin/bash sandsneha
           echo "sandsneha:P@ssw0rd123!" | sudo chpasswd
           sudo usermod -aG sudo sandsneha
           
-          # 2. Create Desktop & Sand Folder
           echo "Creating Directories..."
           sudo mkdir -p /home/sandsneha/Desktop/sand
           
-          # 🟢 CRITICAL FIX: Unlock folder permissions for Setup Phase
-          # This allows the GitHub Runner to write files without "Permission Denied"
+          # Unlock permissions for Setup
           sudo chmod -R 777 /home/sandsneha
           
-          echo "✅ User 'sandsneha' Created & Permissions Unlocked!"
+          echo "✅ User 'sandsneha' Created!"
 
       - name: 📦 Install Dev Tools (VS Code, Python, Node)
         run: |
           sudo apt-get install -y git wget unzip curl software-properties-common python3 python3-pip nodejs npm
           sudo snap install code --classic
-          
-          # Stop Git Hints in Logs
           git config --global advice.defaultBranchName false
 
       - name: 🌌 Install Google Antigravity IDE
@@ -52,13 +47,164 @@ jobs:
         run: |
           echo "Trying to Install Antigravity..."
           
-          # Method 1: Repository Method
           sudo mkdir -p /etc/apt/keyrings
           curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
           
           echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list
           
           sudo apt-get update || echo "Update warning..."
+          
+          if sudo apt-get install -y antigravity; then
+              echo "✅ Installed via APT"
+          else
+              echo "⚠️ APT Failed. Trying Direct Download..."
+              wget -O antigravity.deb "https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/pool/main/a/antigravity/antigravity_latest_amd64.deb" || echo "Download failed"
+              if [ -f "antigravity.deb" ]; then
+                  sudo dpkg -i antigravity.deb
+                  sudo apt-get install -f -y
+                  echo "✅ Installed via DEB"
+              fi
+          fi
+
+          # Create Shortcut
+          echo "[Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Google Antigravity
+          Exec=/usr/bin/antigravity %F
+          Icon=utilities-terminal
+          Terminal=false
+          Categories=Development;IDE;" | sudo tee /home/sandsneha/Desktop/Antigravity.desktop > /dev/null
+          
+          sudo chmod +x /home/sandsneha/Desktop/Antigravity.desktop
+          echo "✅ Shortcut Created!"
+
+      - name: 🤖 Setup Intelligent Backup System
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+          git config --global advice.defaultBranchName false
+          
+          BASE_DIR="/home/sandsneha/Desktop"
+          SAND_DIR="$BASE_DIR/sand"
+          MASTER_REPO="backup-files"
+          MASTER_PATH="$BASE_DIR/$MASTER_REPO"
+
+          echo "Checking Master Repo..."
+          if gh repo view "$MASTER_REPO" > /dev/null 2>&1; then
+              echo "⬇️ Cloning Registry..."
+              gh repo clone "$MASTER_REPO" "$MASTER_PATH"
+          else
+              echo "🆕 Creating Registry..."
+              mkdir -p "$MASTER_PATH"
+              cd "$MASTER_PATH"
+              echo "# Backup Files Registry" > README.md
+              git init
+              git add README.md
+              git commit -m "Initial Commit"
+              gh repo create "$MASTER_REPO" --private --source=. --remote=origin --push
+          fi
+
+          if [ -f "$MASTER_PATH/README.md" ]; then
+              cd "$SAND_DIR"
+              echo "♻️ Restoring Projects..."
+              while read -r repo_name; do
+                  if [[ "$repo_name" == *"/"* ]]; then
+                      echo "⬇️ Downloading $repo_name..."
+                      gh repo clone "$repo_name" || echo "Skipping $repo_name"
+                  fi
+              done < "$MASTER_PATH/README.md"
+          fi
+          
+          echo "📝 Writing Monitor Script..."
+          sudo tee /home/sandsneha/monitor_backups.sh << 'EOF'
+          #!/bin/bash
+          SAND_DIR="/home/sandsneha/Desktop/sand"
+          MASTER_PATH="/home/sandsneha/Desktop/backup-files"
+          
+          git config --global user.name "AutoBackupBot"
+          git config --global user.email "bot@backup.com"
+          git config --global advice.defaultBranchName false
+
+          while true; do
+              for d in "$SAND_DIR"/*/; do
+                  [ -d "$d" ] || continue
+                  FOLDER_NAME=$(basename "$d")
+                  
+                  if ! grep -q "$FOLDER_NAME" "$MASTER_PATH/README.md"; then
+                      cd "$d"
+                      if [ ! -d ".git" ]; then
+                          git init
+                          git add .
+                          git commit -m "Auto Backup"
+                          gh repo create "$FOLDER_NAME" --private --source=. --remote=origin --push
+                          
+                          FULL_REPO=$(gh repo view --json dependencyProjects --template '{{.owner.login}}')/"$FOLDER_NAME"
+                          echo "$FULL_REPO" >> "$MASTER_PATH/README.md"
+                          
+                          cd "$MASTER_PATH"
+                          git add README.md
+                          git commit -m "Added $FOLDER_NAME"
+                          git push origin main
+                      fi
+                  fi
+              done
+              sleep 5
+          done
+          EOF
+          
+          sudo chmod +x /home/sandsneha/monitor_backups.sh
+          echo "✅ Backup System Ready!"
+
+      - name: 🚀 Start Tunnel & Monitor (Windows Style Logic)
+        run: |
+          # Secure Permissions
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
+          
+          # Start Tunnel (Using --logfile to capture output immediately)
+          cloudflared tunnel --url tcp://localhost:3389 --no-autoupdate --logfile tunnel.log &
+          
+          # Start Monitor
+          sudo -u sandsneha nohup bash /home/sandsneha/monitor_backups.sh > monitor.log 2>&1 &
+          
+          echo "⏳ Waiting for Tunnel URL..."
+          
+          # 🟢 Windows-Style Logic: Loop until URL is found
+          MAX_RETRIES=200
+          COUNT=0
+          FOUND_URL=""
+          
+          while [ $COUNT -lt $MAX_RETRIES ]; do
+              if [ -f tunnel.log ]; then
+                  # Grep exact Cloudflare URL pattern
+                  FOUND_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
+                  
+                  if [ ! -z "$FOUND_URL" ]; then
+                      echo ""
+                      echo "========================================================"
+                      echo "✅ SUCCESS! MACHINE IS READY"
+                      echo "🔗 URL: $FOUND_URL"
+                      echo "👤 User: sandsneha"
+                      echo "🔑 Pass: P@ssw0rd123!"
+                      echo "========================================================"
+                      break
+                  fi
+              fi
+              
+              sleep 1
+              ((COUNT++))
+          done
+
+          if [ -z "$FOUND_URL" ]; then
+              echo "❌ ERROR: URL not found after waiting."
+              echo "--- Tunnel Logs ---"
+              cat tunnel.log
+          fi
+          
+          # Keep Alive
+          while true; do sleep 30; done
           
           if sudo apt-get install -y antigravity; then
               echo "✅ Installed via APT"
