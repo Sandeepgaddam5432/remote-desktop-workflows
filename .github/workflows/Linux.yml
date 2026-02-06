@@ -1,4 +1,4 @@
-name: 🖥️ Ubuntu Cloud Workstation2
+name: 🖥️ Ubuntu Cloud Workstation
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
     
     steps:
       # ----------------------------------------------------------------
-      # 1. INSTALL BASE SYSTEM
+      # 1. INSTALL SYSTEM TOOLS
       # ----------------------------------------------------------------
       - name: 📦 Install Desktop & Tools
         run: |
@@ -42,7 +42,7 @@ jobs:
           # Set Password
           echo "sandsneha:${USER_PASSWORD}" | sudo chpasswd
           
-          # Sudo Access without password (for convenience in scripts)
+          # Sudo Access without password (for convenience)
           echo "sandsneha ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/sandsneha
           sudo chmod 0440 /etc/sudoers.d/sandsneha
           
@@ -92,7 +92,7 @@ jobs:
           echo "✅ VNC Configured"
 
       # ----------------------------------------------------------------
-      # 4. START VNC (Improved Logic)
+      # 4. START VNC SERVER
       # ----------------------------------------------------------------
       - name: 🚀 Start VNC Server
         run: |
@@ -107,20 +107,19 @@ jobs:
           
           echo "Waiting for Port 5901 to open..."
           
-          # WAIT LOOP: Check actual network port
-          for i in {1..10}; do
+          # WAIT LOOP: Check actual network port using 'ss'
+          for i in {1..15}; do
             if sudo ss -tuln | grep -q ":5901"; then
                echo "✅ Port 5901 detected open!"
                break
             fi
-            echo "  ...waiting ($i/10)"
+            echo "  ...waiting ($i/15)"
             sleep 1
           done
           
           # Final Verification
           if sudo ss -tuln | grep -q ":5901"; then
              echo "✅ VNC Server Running Success!"
-             sudo -u sandsneha vncserver -list
           else
              echo "❌ ERROR: VNC Port 5901 not open."
              echo "--- DUMPING LOGS ---"
@@ -129,7 +128,7 @@ jobs:
           fi
 
       # ----------------------------------------------------------------
-      # 5. CLOUDFLARE TUNNEL
+      # 5. CLOUDFLARE TUNNEL (Timeout Increased)
       # ----------------------------------------------------------------
       - name: ☁️ Setup Cloudflare Tunnel
         run: |
@@ -140,30 +139,40 @@ jobs:
           rm cloudflared-linux-amd64.deb
           
           echo "Starting Tunnel..."
-          nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
+          # Using --no-autoupdate to be safe
+          nohup cloudflared tunnel --url tcp://localhost:5901 --no-autoupdate > /tmp/cloudflare.log 2>&1 &
           
-          echo "Waiting for URL..."
+          echo "Waiting for URL (Max 3 mins)..."
           TUNNEL_HOST=""
           
-          for i in {1..60}; do
-            if [ -f /tmp/cloudflare.log ] && grep -q "trycloudflare.com" /tmp/cloudflare.log; then
-              TUNNEL_HOST=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
-              break
+          # WAIT UP TO 180 SECONDS
+          for i in {1..180}; do
+            if [ -f /tmp/cloudflare.log ]; then
+                # Check if URL exists in logs
+                if grep -q "trycloudflare.com" /tmp/cloudflare.log; then
+                    # Extract URL robustly
+                    TUNNEL_HOST=$(grep -oP 'https://\K[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
+                    if [ ! -z "$TUNNEL_HOST" ]; then
+                        echo "✅ URL Found: $TUNNEL_HOST"
+                        break
+                    fi
+                fi
             fi
             sleep 1
           done
           
           if [ -z "$TUNNEL_HOST" ]; then
-            echo "❌ Tunnel URL not found."
+            echo "❌ Tunnel URL not found within timeout."
+            echo "--- LOG CONTENT ---"
             cat /tmp/cloudflare.log
             exit 1
           fi
           
           echo ""
           echo "═════════════════════════════════════════════════════════════"
-          echo "✅ TUNNEL ESTABLISHED!"
+          echo "✅ TUNNEL ESTABLISHED SUCCESSFULLY!"
           echo "═════════════════════════════════════════════════════════════"
-          echo "👇 RUN THIS ON YOUR COMPUTER:"
+          echo "👇 COPY AND RUN THIS COMMAND LOCALLY:"
           echo ""
           echo "cloudflared access tcp --hostname $TUNNEL_HOST --url 127.0.0.1:5901"
           echo ""
