@@ -66,18 +66,16 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cf.log 2>&1 &
+          sleep 5
           for i in {1..30}; do
-            grep -q "trycloudflare.com" /tmp/cf.log 2>/dev/null && break
+            if grep -q "trycloudflare.com" /tmp/cf.log 2>/dev/null; then
+              break
+            fi
             sleep 2
           done
           H=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cf.log | head -1)
-          echo ""
-          echo "═══════════════════════════════════════"
-          echo "🎯 LOCAL COMMAND:"
-          echo "cloudflared access tcp --hostname $H --url 127.0.0.1:5901"
-          echo "═══════════════════════════════════════"
-          echo "📌 VNC: localhost:5901"
-          echo "═══════════════════════════════════════"
+          echo "$H" > /tmp/cf_hostname.txt
+          echo "✅ Cloudflared tunnel started"
 
       - name: 🐍 Python
         run: sudo apt-get install -y python3 python3-pip python3-venv && python3 --version
@@ -152,5 +150,20 @@ jobs:
 
       - name: 💚 Keep Alive
         run: |
-          echo "✅ READY"
+          H=$(cat /tmp/cf_hostname.txt 2>/dev/null || echo "")
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "✅ WORKSTATION READY"
+          echo "═══════════════════════════════════════"
+          if [ -n "$H" ]; then
+            echo "🎯 LOCAL COMMAND:"
+            echo "cloudflared access tcp --hostname $H --url 127.0.0.1:5901"
+            echo "═══════════════════════════════════════"
+            echo "📌 VNC: localhost:5901"
+          else
+            echo "⚠️  Cloudflare hostname not found"
+            echo "Check /tmp/cf.log for details"
+          fi
+          echo "═══════════════════════════════════════"
+          echo ""
           while true; do sleep 3600; pgrep Xtigervnc || sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no; done
