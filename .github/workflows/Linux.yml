@@ -128,8 +128,14 @@ jobs:
         run: |
           set -e
           echo "Restoring projects..."
+          
+          # Change to home directory to avoid permission issues
+          cd /home/sandsneha
+          
+          # Configure git as user
           sudo -u sandsneha git config --global user.name "sandsneha"
           sudo -u sandsneha git config --global user.email "sandsneha@github.com"
+          
           REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/sandsneha/backup-files.git"
           if sudo -u sandsneha git ls-remote "$REGISTRY_URL" &>/dev/null; then
             echo "Found backup registry"
