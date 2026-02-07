@@ -40,12 +40,23 @@ jobs:
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
           cat > /tmp/xs << 'EOF'
-          #!/bin/bash
-          export DISPLAY=:1
-          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
-          xsetroot -solid grey
-          /usr/bin/startxfce4
-          EOF
+#!/bin/bash
+# Unset session manager variables to avoid conflicts
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+# Set display
+export DISPLAY=:1
+
+# Load X resources if available
+[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+
+# Set background color
+xsetroot -solid grey
+
+# Start XFCE with dbus-launch to ensure proper D-Bus session
+exec dbus-launch --exit-with-session startxfce4
+EOF
           
           sudo mv /tmp/xs /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
@@ -57,8 +68,9 @@ jobs:
           sudo -u sandsneha touch /home/sandsneha/.Xauthority
           sudo mkdir -p /run/user/$(id -u sandsneha)
           sudo chown sandsneha:sandsneha /run/user/$(id -u sandsneha)
-          sudo -u sandsneha DISPLAY=:1 vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
-          sleep 3
+          export XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha)
+          sudo -u sandsneha XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha) DISPLAY=:1 vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          sleep 5
           pgrep Xtigervnc && echo "✅ VNC running" || (cat /home/sandsneha/.vnc/*.log && exit 1)
 
       - name: ☁️ Cloudflare Tunnel
@@ -160,10 +172,14 @@ jobs:
             echo "cloudflared access tcp --hostname $H --url 127.0.0.1:5901"
             echo "═══════════════════════════════════════"
             echo "📌 VNC: localhost:5901"
+            echo "🔑 Password: Check VNC_PASSWORD secret or default P@ssw0rd123!"
           else
             echo "⚠️  Cloudflare hostname not found"
             echo "Check /tmp/cf.log for details"
           fi
           echo "═══════════════════════════════════════"
           echo ""
-          while true; do sleep 3600; pgrep Xtigervnc || sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no; done
+          while true; do 
+            sleep 3600
+            pgrep Xtigervnc || sudo -u sandsneha XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha) vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          done
