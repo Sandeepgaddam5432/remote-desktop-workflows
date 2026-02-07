@@ -53,9 +53,14 @@ jobs:
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
+          sudo -u sandsneha touch /home/sandsneha/.Xresources
+          
           echo '#!/bin/sh' > /tmp/xstartup
-          echo 'xrdb $HOME/.Xresources' >> /tmp/xstartup
+          echo 'unset SESSION_MANAGER' >> /tmp/xstartup
+          echo 'unset DBUS_SESSION_BUS_ADDRESS' >> /tmp/xstartup
+          echo 'xrdb $HOME/.Xresources 2>/dev/null || true' >> /tmp/xstartup
           echo 'startxfce4 &' >> /tmp/xstartup
+          echo 'wait' >> /tmp/xstartup
           
           sudo mv /tmp/xstartup /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
