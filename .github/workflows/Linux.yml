@@ -1,4 +1,4 @@
-name: 🖥️ Ubuntu Cloud Workstation
+name: 🖥️ Ubuntu Cloud Workstation (Research-Backed Solution)
 
 on:
   workflow_dispatch:
@@ -18,12 +18,12 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: 📦 Install Desktop Environment
+      - name: 📦 Install XFCE Desktop & TigerVNC
         run: |
           set -e
           echo "Installing XFCE4 Desktop & TigerVNC..."
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common dbus-x11 inotify-tools git curl wget jq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-terminal tigervnc-standalone-server tigervnc-common dbus-x11 inotify-tools git curl wget jq
           echo "✅ Desktop installed"
 
       - name: 👤 Create User
@@ -39,12 +39,12 @@ jobs:
           sudo chmod 0440 /etc/sudoers.d/sandsneha
           echo "✅ User created"
 
-      - name: 🔐 Configure VNC
+      - name: 🔐 Configure VNC (Research-Based Solution)
         env:
           USER_PASSWORD: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
         run: |
           set -e
-          echo "Configuring VNC..."
+          echo "Configuring VNC with proven xstartup script..."
           
           sudo -u sandsneha mkdir -p /home/sandsneha/.vnc
           
@@ -54,15 +54,8 @@ jobs:
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
           echo '#!/bin/sh' > /tmp/xstartup
-          echo '# XFCE VNC Session' >> /tmp/xstartup
-          echo 'export XDG_CURRENT_DESKTOP=XFCE' >> /tmp/xstartup
-          echo 'export XDG_SESSION_TYPE=x11' >> /tmp/xstartup
-          echo 'export XDG_SESSION_DESKTOP=xfce' >> /tmp/xstartup
-          echo 'if test -z "$DBUS_SESSION_BUS_ADDRESS"; then' >> /tmp/xstartup
-          echo '    eval $(dbus-launch --exit-with-session --sh-syntax)' >> /tmp/xstartup
-          echo 'fi' >> /tmp/xstartup
-          echo 'pkill xfconfd 2>/dev/null || true' >> /tmp/xstartup
-          echo 'exec /usr/bin/xfce4-session' >> /tmp/xstartup
+          echo 'xrdb $HOME/.Xresources' >> /tmp/xstartup
+          echo 'startxfce4 &' >> /tmp/xstartup
           
           sudo mv /tmp/xstartup /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
@@ -78,21 +71,17 @@ jobs:
           set -e
           echo "Starting VNC Server..."
           
-          # Create .Xauthority file first
           sudo -u sandsneha touch /home/sandsneha/.Xauthority
           sudo chown sandsneha:sandsneha /home/sandsneha/.Xauthority
           
-          # Create runtime directory for D-Bus
           sudo mkdir -p /run/user/$(id -u sandsneha)
           sudo chown sandsneha:sandsneha /run/user/$(id -u sandsneha)
           sudo chmod 700 /run/user/$(id -u sandsneha)
           
-          # Start VNC server
           sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth
           
           sleep 5
           
-          # Check if VNC process is running (better than vncserver -list)
           if pgrep -u sandsneha Xtigervnc > /dev/null; then
             echo "✅ VNC Server running on port 5901"
             ps aux | grep -v grep | grep Xtigervnc
@@ -106,13 +95,18 @@ jobs:
         run: |
           set -e
           echo "Installing cloudflared..."
+          
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           rm cloudflared-linux-amd64.deb
+          
           echo "Starting tunnel..."
+          
           nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
+          
           echo "Waiting for tunnel..."
           TUNNEL_HOST=""
+          
           for i in {1..60}; do
             if [ -f /tmp/cloudflare.log ] && grep -q "https://.*trycloudflare.com" /tmp/cloudflare.log; then
               TUNNEL_HOST=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
@@ -120,11 +114,13 @@ jobs:
             fi
             sleep 1
           done
+          
           if [ -z "$TUNNEL_HOST" ]; then
             echo "❌ Tunnel failed"
             cat /tmp/cloudflare.log
             exit 1
           fi
+          
           echo ""
           echo "═════════════════════════════════════════════════════════════"
           echo "✅ TUNNEL READY!"
@@ -147,23 +143,27 @@ jobs:
           set -e
           echo "Restoring projects..."
           
-          # Change to home directory to avoid permission issues
           cd /home/sandsneha
           
-          # Configure git as user
           sudo -u sandsneha git config --global user.name "sandsneha"
           sudo -u sandsneha git config --global user.email "sandsneha@github.com"
           
           REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/sandsneha/backup-files.git"
+          
           if sudo -u sandsneha git ls-remote "$REGISTRY_URL" &>/dev/null; then
             echo "Found backup registry"
+            
             sudo -u sandsneha git clone --depth=1 "$REGISTRY_URL" /tmp/backup-registry
+            
             if [ -f /tmp/backup-registry/README.md ]; then
               echo "Restoring projects..."
+              
               grep -oP '^\s*-\s*\K[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+' /tmp/backup-registry/README.md | while read repo; do
                 PROJECT_NAME=$(basename "$repo")
                 PROJECT_URL="https://x-access-token:${GH_TOKEN}@github.com/${repo}.git"
+                
                 echo "  Restoring: $PROJECT_NAME"
+                
                 if sudo -u sandsneha git clone --depth=1 "$PROJECT_URL" "/home/sandsneha/Desktop/sand/$PROJECT_NAME" 2>/dev/null; then
                   echo "    ✅ Done"
                 else
@@ -171,29 +171,40 @@ jobs:
                 fi
               done
             fi
+            
             sudo rm -rf /tmp/backup-registry
+            
           else
             echo "Creating new registry..."
+            
             sudo -u sandsneha mkdir -p /tmp/new-registry
+            
             echo '# 🗂️ Backup Registry' | sudo -u sandsneha tee /tmp/new-registry/README.md
             echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
             echo 'Auto-managed project list.' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
             echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
             echo '## Projects:' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
             echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
+            
             cd /tmp/new-registry
             sudo -u sandsneha git init
             sudo -u sandsneha git add README.md
             sudo -u sandsneha git commit -m "Initialize backup registry"
             sudo -u sandsneha git branch -M main
+            
             curl -s -X POST -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/user/repos -d '{"name":"backup-files","private":true}' > /dev/null 2>&1 || true
+            
             sleep 3
+            
             sudo -u sandsneha git remote add origin "$REGISTRY_URL"
             sudo -u sandsneha git push -u origin main 2>/dev/null || echo "⚠️  Push timed out"
+            
             cd /
             sudo rm -rf /tmp/new-registry
+            
             echo "✅ Registry created"
           fi
+          
           echo "✅ Restore done"
 
       - name: 🐍 Install Python
@@ -230,6 +241,7 @@ jobs:
         run: |
           set +e
           echo "Attempting Antigravity IDE..."
+          
           if wget -q --timeout=10 https://dl.google.com/linux/direct/antigravity-ide_latest_amd64.deb 2>/dev/null; then
             sudo dpkg -i antigravity-ide_latest_amd64.deb 2>/dev/null
             sudo apt-get install -f -y 2>/dev/null
@@ -241,6 +253,7 @@ jobs:
           else
             sudo snap install antigravity-ide 2>/dev/null && echo "✅ Installed" || echo "⚠️  Not available"
           fi
+          
           exit 0
 
       - name: 👁️ Create Backup Watcher Script
