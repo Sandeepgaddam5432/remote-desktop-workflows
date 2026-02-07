@@ -54,6 +54,7 @@ jobs:
           echo "🔄 Configuring VNC..."
           sudo tee /home/sandsneha/.vnc/xstartup > /dev/null << 'XSTART'
           #!/bin/sh
+          export HOME=/home/sandsneha
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
           export XKL_XMODMAP_DISABLE=1
