@@ -39,24 +39,15 @@ jobs:
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
-          cat > /tmp/xs << 'EOF'
-#!/bin/bash
-# Unset session manager variables to avoid conflicts
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-
-# Set display
-export DISPLAY=:1
-
-# Load X resources if available
-[ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
-
-# Set background color
-xsetroot -solid grey
-
-# Start XFCE with dbus-launch to ensure proper D-Bus session
-exec dbus-launch --exit-with-session startxfce4
-EOF
+          cat > /tmp/xs << 'XSTARTUP'
+          #!/bin/bash
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          export DISPLAY=:1
+          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          xsetroot -solid grey
+          exec dbus-launch --exit-with-session startxfce4
+          XSTARTUP
           
           sudo mv /tmp/xs /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
@@ -135,7 +126,7 @@ EOF
         env:
           T: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          cat > /tmp/w.sh << 'SCRIPT'
+          cat > /tmp/w.sh << 'WATCHSCRIPT'
           #!/bin/bash
           D="/home/sandsneha/Desktop/sand"
           U="sandsneha"
@@ -153,7 +144,7 @@ EOF
           inotifywait -m -e create --format '%w%f' "$D" | while read P; do
             [ -d "$P" ] && process "$P" &
           done
-          SCRIPT
+          WATCHSCRIPT
           sudo sed -i "s|\${T}|${T}|g" /tmp/w.sh
           sudo mv /tmp/w.sh /home/sandsneha/w.sh
           sudo chown sandsneha:sandsneha /home/sandsneha/w.sh
