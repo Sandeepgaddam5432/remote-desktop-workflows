@@ -1,4 +1,4 @@
-name: 🖥️ Ubuntu Cloud Workstation - FINAL FIXED
+name: 🖥️ Ubuntu Cloud Workstation - FINAL FIXED v2
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
           echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
-          # Create config directories for MATE desktop components
+          # Create config directories for MATE desktop components to prevent permission errors
           sudo mkdir -p /home/sandsneha/.config/caja
           sudo mkdir -p /home/sandsneha/.config/mate
           sudo mkdir -p /home/sandsneha/.local/share
@@ -52,6 +52,7 @@ jobs:
       - name: 🔐 Create VNC Startup Script
         run: |
           echo "🔄 Configuring VNC..."
+          # Force HOME variable inside the script as a failsafe
           sudo tee /home/sandsneha/.vnc/xstartup > /dev/null << 'XSTART'
           #!/bin/sh
           export HOME=/home/sandsneha
@@ -80,7 +81,8 @@ jobs:
           sudo chown sandsneha:sandsneha /run/user/1001
           sudo chmod 700 /run/user/1001
           
-          sudo -u sandsneha bash -c 'export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+          # CRITICAL FIX: Used -H to set HOME env and explicitly exported HOME inside the command
+          sudo -H -u sandsneha bash -c 'export HOME=/home/sandsneha && export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
           
           sleep 5
           
@@ -316,6 +318,7 @@ jobs:
             
             if ! pgrep -f "Xtigervnc.*:1" > /dev/null; then
               echo "[$(date)] 🔄 VNC connection lost, restarting..."
-              sudo -u sandsneha bash -c 'export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+              # CRITICAL FIX REPEATED FOR LOOP: Explicitly setting HOME again here
+              sudo -H -u sandsneha bash -c 'export HOME=/home/sandsneha && export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
             fi
           done
