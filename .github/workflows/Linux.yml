@@ -1,7 +1,14 @@
-name: 🖥️ Ubuntu Cloud Workstation - FINAL FIXED v2
+name: 🖥️ Ubuntu Cloud Workstation - Production Ready
 
 on:
   workflow_dispatch:
+
+env:
+  VNC_DISPLAY: ':1'
+  VNC_GEOMETRY: '1920x1080'
+  VNC_DEPTH: '24'
+  DESKTOP_DIR: '$HOME/Desktop/workspace'
+  BACKUP_REPO: 'backup-files'
 
 jobs:
   workstation:
@@ -24,87 +31,91 @@ jobs:
             firefox
           echo "✅ Desktop installed successfully"
 
-      - name: 👤 Setup User
-        run: |
-          echo "🔄 Creating user sandsneha..."
-          PASS="${{ secrets.VNC_PASSWORD }}"
-          if [ -z "$PASS" ]; then
-            PASS="P@ssw0rd123!"
-          fi
-          
-          sudo useradd -m -s /bin/bash -G sudo sandsneha
-          echo "sandsneha:${PASS}" | sudo chpasswd
-          echo "sandsneha ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/sandsneha
-          sudo chmod 0440 /etc/sudoers.d/sandsneha
-          
-          sudo mkdir -p /home/sandsneha/.vnc
-          echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
-          sudo chmod 600 /home/sandsneha/.vnc/passwd
-          
-          # Create config directories for MATE desktop components to prevent permission errors
-          sudo mkdir -p /home/sandsneha/.config/caja
-          sudo mkdir -p /home/sandsneha/.config/mate
-          sudo mkdir -p /home/sandsneha/.local/share
-          
-          sudo chown -R sandsneha:sandsneha /home/sandsneha
-          echo "✅ User created successfully"
-
-      - name: 🔐 Create VNC Startup Script
+      - name: 🔐 Configure VNC Server
         run: |
           echo "🔄 Configuring VNC..."
-          # Force HOME variable inside the script as a failsafe
-          sudo tee /home/sandsneha/.vnc/xstartup > /dev/null << 'XSTART'
+          
+          # Set VNC password
+          VNC_PASS="${{ secrets.VNC_PASSWORD }}"
+          if [ -z "$VNC_PASS" ]; then
+            VNC_PASS="P@ssw0rd123!"
+          fi
+          
+          mkdir -p ~/.vnc
+          echo "$VNC_PASS" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          
+          # Create MATE desktop config directories
+          mkdir -p ~/.config/{caja,mate}
+          mkdir -p ~/.local/share
+          
+          # Create VNC startup script
+          cat > ~/.vnc/xstartup << 'EOF'
           #!/bin/sh
-          export HOME=/home/sandsneha
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
           export XKL_XMODMAP_DISABLE=1
           export XDG_CURRENT_DESKTOP="MATE"
           export XDG_SESSION_TYPE=x11
+          
           [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
           [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          
           xsetroot -solid grey
           vncconfig -iconic &
           exec mate-session
-          XSTART
+          EOF
           
-          sudo chmod +x /home/sandsneha/.vnc/xstartup
-          sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
-          sudo mkdir -p /home/sandsneha/Desktop/sand
-          sudo chown -R sandsneha:sandsneha /home/sandsneha/Desktop
+          chmod +x ~/.vnc/xstartup
+          
+          # Create workspace directory
+          mkdir -p ~/Desktop/workspace
+          
           echo "✅ VNC configured successfully"
 
       - name: 🚀 Start VNC Server
         run: |
           echo "🔄 Starting VNC server..."
-          sudo mkdir -p /run/user/1001
-          sudo chown sandsneha:sandsneha /run/user/1001
-          sudo chmod 700 /run/user/1001
           
-          # CRITICAL FIX: Used -H to set HOME env and explicitly exported HOME inside the command
-          sudo -H -u sandsneha bash -c 'export HOME=/home/sandsneha && export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+          # Ensure XDG runtime directory exists
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          
+          # Start VNC server
+          vncserver ${{ env.VNC_DISPLAY }} \
+            -geometry ${{ env.VNC_GEOMETRY }} \
+            -depth ${{ env.VNC_DEPTH }} \
+            -localhost no
           
           sleep 5
           
-          if pgrep -f "Xtigervnc.*:1" > /dev/null; then
-            echo "✅ VNC Server is running on :1"
+          # Verify VNC is running
+          if pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
+            echo "✅ VNC Server is running on ${{ env.VNC_DISPLAY }}"
           else
             echo "❌ VNC Server failed to start"
             echo "📋 VNC Logs:"
-            cat /home/sandsneha/.vnc/*.log 2>/dev/null || echo "No logs found"
+            cat ~/.vnc/*.log 2>/dev/null || echo "No logs found"
             exit 1
           fi
 
       - name: ☁️ Setup Cloudflare Tunnel
         run: |
           echo "🔄 Setting up Cloudflare tunnel..."
+          
+          # Install cloudflared
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
+          rm cloudflared-linux-amd64.deb
           
+          # Start tunnel
           cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
           
+          # Wait for tunnel to establish
           sleep 10
           
+          # Extract hostname
           for i in {1..40}; do
             if grep -q "https://" /tmp/cloudflare.log 2>/dev/null; then
               HOSTNAME=$(grep -oP "https://\K[^[:space:]]+" /tmp/cloudflare.log | grep trycloudflare.com | head -1)
@@ -118,24 +129,26 @@ jobs:
           done
           
           if [ ! -f /tmp/cf_host.txt ]; then
-            echo "⚠️  Cloudflare tunnel may not be ready yet"
+            echo "⚠️  Cloudflare tunnel initialization in progress..."
             echo "📋 Cloudflare Logs:"
-            head -20 /tmp/cloudflare.log 2>/dev/null || echo "No logs available"
+            head -20 /tmp/cloudflare.log 2>/dev/null || echo "Logs not yet available"
           fi
 
-      - name: 🐍 Install Python
+      - name: 🐍 Install Python Environment
         run: |
           echo "🔄 Installing Python..."
           sudo apt-get install -y python3 python3-pip python3-venv
           python3 --version
+          pip3 --version
           echo "✅ Python installed"
 
-      - name: 📗 Install Node.js
+      - name: 📗 Install Node.js Environment
         run: |
           echo "🔄 Installing Node.js..."
           curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
           sudo apt-get install -y nodejs
           node --version
+          npm --version
           echo "✅ Node.js installed"
 
       - name: 💻 Install VS Code
@@ -143,182 +156,259 @@ jobs:
           echo "🔄 Installing VS Code..."
           wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
           sudo install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | \
+            sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y code
+          rm /tmp/packages.microsoft.gpg
+          code --version
           echo "✅ VS Code installed"
 
       - name: 🌌 Install Antigravity IDE
         run: |
           echo "🔄 Installing Antigravity IDE..."
-          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/antigravity.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/antigravity.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/antigravity.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
+            sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
           sudo apt-get update -qq
           sudo apt-get install -y antigravity
           antigravity --version
           echo "✅ Antigravity IDE installed"
 
-      - name: 🔄 Restore Projects
+      - name: ⚙️ Configure Git
+        run: |
+          echo "🔄 Configuring Git..."
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config --global init.defaultBranch main
+          echo "✅ Git configured for user: ${GITHUB_ACTOR}"
+
+      - name: 🔄 Restore Projects from Backup
         run: |
           echo "🔄 Setting up backup restoration..."
           
+          # Determine which token to use
           TOKEN="${{ secrets.GH_TOKEN }}"
           if [ -z "$TOKEN" ]; then
             TOKEN="${{ secrets.GITHUB_TOKEN }}"
           fi
           
-          # Setup git config in user home directory context
-          sudo -u sandsneha bash -c "cd /home/sandsneha && git config --global user.name 'sandsneha'"
-          sudo -u sandsneha bash -c "cd /home/sandsneha && git config --global user.email 'sandsneha@github.com'"
-          sudo -u sandsneha bash -c "cd /home/sandsneha && git config --global init.defaultBranch main"
+          BACKUP_REPO_URL="https://x-access-token:${TOKEN}@github.com/${GITHUB_ACTOR}/${{ env.BACKUP_REPO }}.git"
           
-          BACKUP_REPO="https://x-access-token:${TOKEN}@github.com/sandsneha/backup-files.git"
-          
-          # Check if backup repo exists - run git command from user home
-          if sudo -u sandsneha bash -c "cd /home/sandsneha && git ls-remote '$BACKUP_REPO' &>/dev/null"; then
-            echo "📥 Backup repository found, restoring..."
-            sudo -u sandsneha bash -c "cd /home/sandsneha && git clone --depth=1 '$BACKUP_REPO' backup-temp"
+          # Check if backup repository exists
+          if git ls-remote "$BACKUP_REPO_URL" &>/dev/null; then
+            echo "📥 Backup repository found, restoring projects..."
             
-            if [ -f /home/sandsneha/backup-temp/README.md ]; then
-              grep -oP '^\s*-\s*\K\S+' /home/sandsneha/backup-temp/README.md | while read repo; do
-                REPO_NAME=$(basename "$repo")
+            git clone --depth=1 "$BACKUP_REPO_URL" /tmp/backup-temp
+            
+            if [ -f /tmp/backup-temp/README.md ]; then
+              # Extract repository names from README
+              grep -oP '^\s*-\s*\K\S+' /tmp/backup-temp/README.md | while read REPO_PATH; do
+                REPO_NAME=$(basename "$REPO_PATH")
                 echo "  📦 Restoring: $REPO_NAME"
-                sudo -u sandsneha bash -c "cd /home/sandsneha && git clone --depth=1 'https://x-access-token:${TOKEN}@github.com/${repo}.git' '/home/sandsneha/Desktop/sand/${REPO_NAME}'" 2>/dev/null || echo "    ⚠️  Failed to restore $REPO_NAME"
+                
+                git clone --depth=1 \
+                  "https://x-access-token:${TOKEN}@github.com/${REPO_PATH}.git" \
+                  "$HOME/Desktop/workspace/${REPO_NAME}" 2>/dev/null || \
+                  echo "    ⚠️  Failed to restore $REPO_NAME"
               done
             fi
             
-            sudo rm -rf /home/sandsneha/backup-temp
+            rm -rf /tmp/backup-temp
             echo "✅ Projects restored successfully"
+            
           else
-            echo "📝 Creating new backup repository..."
-            sudo -u sandsneha bash -c "mkdir -p /home/sandsneha/new-backup-init"
-            sudo -u sandsneha bash -c "echo '# Backup Repository' > /home/sandsneha/new-backup-init/README.md"
+            echo "📝 No existing backup found, creating new backup repository..."
             
-            sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git init && git add . && git commit -m 'Initial commit' && git branch -M main"
+            # Create initial backup repository
+            mkdir -p /tmp/new-backup
+            echo "# Backup Repository" > /tmp/new-backup/README.md
+            echo "" >> /tmp/new-backup/README.md
+            echo "This repository tracks all backed-up projects." >> /tmp/new-backup/README.md
+            echo "" >> /tmp/new-backup/README.md
+            echo "## Projects" >> /tmp/new-backup/README.md
             
-            curl -s -X POST \
-              -H "Authorization: token ${TOKEN}" \
-              -H "Content-Type: application/json" \
-              https://api.github.com/user/repos \
-              -d '{"name":"backup-files","private":true}' > /dev/null
-            
-            sleep 3
-            sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git remote add origin '$BACKUP_REPO' && git push -u origin main" 2>/dev/null || echo "⚠️  Push failed (repo might need time to initialize)"
-            
-            sudo rm -rf /home/sandsneha/new-backup-init
-            echo "✅ Backup repository created"
-          fi
-
-      - name: 👁️ Start Backup Watcher
-        run: |
-          echo "🔄 Setting up backup watcher..."
-          
-          TOKEN="${{ secrets.GH_TOKEN }}"
-          if [ -z "$TOKEN" ]; then
-            TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          fi
-          
-          sudo tee /home/sandsneha/backup-watcher.sh > /dev/null << 'WATCHER'
-          #!/bin/bash
-          WATCH_DIR="/home/sandsneha/Desktop/sand"
-          USERNAME="sandsneha"
-          
-          process_new_folder() {
-            FOLDER_PATH="$1"
-            FOLDER_NAME=$(basename "$FOLDER_PATH")
-            
-            sleep 15
-            
-            if [ -z "$(ls -A "$FOLDER_PATH")" ]; then
-              return
-            fi
-            
-            curl -s -X POST \
-              -H "Authorization: token TOKEN_PLACEHOLDER" \
-              -H "Content-Type: application/json" \
-              https://api.github.com/user/repos \
-              -d "{\"name\":\"$FOLDER_NAME\",\"private\":true}" > /dev/null
-            
-            cd "$FOLDER_PATH"
+            cd /tmp/new-backup
             git init
             git add .
             git commit -m "Initial commit"
             git branch -M main
-            git remote add origin "https://x-access-token:TOKEN_PLACEHOLDER@github.com/$USERNAME/$FOLDER_NAME.git"
-            git push -u origin main 2>/dev/null
             
-            if [ $? -eq 0 ]; then
-              flock /home/sandsneha/backup.lock -c "
-                cd /home/sandsneha
-                rm -rf backup-list-temp
-                git clone --depth=1 https://x-access-token:TOKEN_PLACEHOLDER@github.com/$USERNAME/backup-files.git backup-list-temp
-                cd backup-list-temp
-                echo \"- $USERNAME/$FOLDER_NAME\" >> README.md
-                git add .
-                git commit -m \"Add $FOLDER_NAME\"
+            # Create repository via GitHub API
+            curl -s -X POST \
+              -H "Authorization: token ${TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/user/repos \
+              -d "{\"name\":\"${{ env.BACKUP_REPO }}\",\"private\":true,\"description\":\"Automated project backups\"}" \
+              > /dev/null
+            
+            sleep 3
+            
+            # Push to GitHub
+            git remote add origin "$BACKUP_REPO_URL"
+            git push -u origin main 2>/dev/null || \
+              echo "⚠️  Initial push failed (repository may need time to initialize)"
+            
+            cd ~
+            rm -rf /tmp/new-backup
+            echo "✅ Backup repository created"
+          fi
+
+      - name: 👁️ Start Backup Watcher Service
+        run: |
+          echo "🔄 Setting up backup watcher..."
+          
+          # Determine which token to use
+          TOKEN="${{ secrets.GH_TOKEN }}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          fi
+          
+          # Create backup watcher script
+          cat > ~/backup-watcher.sh << 'EOF'
+          #!/bin/bash
+          
+          WATCH_DIR="$HOME/Desktop/workspace"
+          GITHUB_USER="${GITHUB_ACTOR}"
+          BACKUP_REPO="backup-files"
+          TOKEN="TOKEN_PLACEHOLDER"
+          
+          process_new_folder() {
+            local FOLDER_PATH="$1"
+            local FOLDER_NAME=$(basename "$FOLDER_PATH")
+            
+            # Wait for folder to settle
+            sleep 15
+            
+            # Skip if folder is empty
+            if [ -z "$(ls -A "$FOLDER_PATH")" ]; then
+              echo "⏭️  Skipping empty folder: $FOLDER_NAME"
+              return
+            fi
+            
+            echo "📤 Processing new project: $FOLDER_NAME"
+            
+            # Create GitHub repository
+            curl -s -X POST \
+              -H "Authorization: token $TOKEN" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/user/repos \
+              -d "{\"name\":\"$FOLDER_NAME\",\"private\":true}" > /dev/null
+            
+            sleep 2
+            
+            # Initialize git and push
+            cd "$FOLDER_PATH"
+            git init
+            git add .
+            git commit -m "Initial commit" 2>/dev/null
+            git branch -M main
+            git remote add origin "https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$FOLDER_NAME.git"
+            
+            if git push -u origin main 2>/dev/null; then
+              echo "  ✅ Pushed to GitHub: $FOLDER_NAME"
+              
+              # Update backup repository index
+              flock ~/backup.lock -c "
+                cd ~
+                rm -rf /tmp/backup-list-update
+                git clone --depth=1 https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$BACKUP_REPO.git /tmp/backup-list-update
+                cd /tmp/backup-list-update
+                echo '- $GITHUB_USER/$FOLDER_NAME' >> README.md
+                git add README.md
+                git commit -m 'Add $FOLDER_NAME to backup index'
                 git push
-                cd /home/sandsneha
-                rm -rf backup-list-temp
+                cd ~
+                rm -rf /tmp/backup-list-update
               " 2>/dev/null
+              
+              echo "  ✅ Updated backup index"
+            else
+              echo "  ❌ Failed to push: $FOLDER_NAME"
             fi
           }
           
+          export -f process_new_folder
+          
+          # Watch for new directories
+          echo "👁️  Watching: $WATCH_DIR"
           inotifywait -m -e create --format '%w%f' "$WATCH_DIR" | while read NEW_PATH; do
             if [ -d "$NEW_PATH" ]; then
               process_new_folder "$NEW_PATH" &
             fi
           done
-          WATCHER
+          EOF
           
-          sudo sed -i "s|TOKEN_PLACEHOLDER|${TOKEN}|g" /home/sandsneha/backup-watcher.sh
-          sudo chmod +x /home/sandsneha/backup-watcher.sh
-          sudo chown sandsneha:sandsneha /home/sandsneha/backup-watcher.sh
+          # Replace token placeholder
+          sed -i "s|TOKEN_PLACEHOLDER|${TOKEN}|g" ~/backup-watcher.sh
+          chmod +x ~/backup-watcher.sh
           
-          sudo -u sandsneha nohup bash /home/sandsneha/backup-watcher.sh > /dev/null 2>&1 &
+          # Start watcher in background
+          nohup bash ~/backup-watcher.sh > ~/backup-watcher.log 2>&1 &
           
-          echo "✅ Backup watcher started"
+          echo "✅ Backup watcher started (PID: $!)"
 
-      - name: 💚 Keep Alive & Display Info
+      - name: 💚 Keep Alive & Display Connection Info
         run: |
           CLOUDFLARE_HOST=$(cat /tmp/cf_host.txt 2>/dev/null || echo "")
           
           echo ""
           echo "╔═══════════════════════════════════════════════════════╗"
           echo "║                                                       ║"
-          echo "║          ✅  WORKSTATION READY & RUNNING  ✅          ║"
+          echo "║       ✅  CLOUD WORKSTATION READY & RUNNING  ✅       ║"
           echo "║                                                       ║"
           echo "╚═══════════════════════════════════════════════════════╝"
           echo ""
           
           if [ -n "$CLOUDFLARE_HOST" ]; then
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "🎯 STEP 1: Run this on your LOCAL machine:"
+            echo "🎯 STEP 1: Run this command on your LOCAL machine:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
             echo "cloudflared access tcp --hostname $CLOUDFLARE_HOST --url 127.0.0.1:5901"
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "🖥️  STEP 2: Open VNC Viewer and connect:"
+            echo "🖥️  STEP 2: Connect using VNC Viewer:"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Server:   localhost:5901"
-            echo "Password: Your VNC_PASSWORD secret (or default: P@ssw0rd123!)"
+            echo ""
+            echo "  Address:  localhost:5901"
+            echo "  Password: $([ -n "${{ secrets.VNC_PASSWORD }}" ] && echo "Your VNC_PASSWORD secret" || echo "P@ssw0rd123!")"
+            echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           else
-            echo "⚠️  Cloudflare tunnel hostname not detected"
-            echo "Check the 'Setup Cloudflare Tunnel' step logs above"
+            echo "⚠️  Cloudflare tunnel hostname not yet available"
+            echo "    Check logs above or wait a few moments"
           fi
           
           echo ""
-          echo "🔄 Workstation will stay alive for 6 hours..."
-          echo "   (VNC auto-restart enabled)"
+          echo "📊 Workstation Details:"
+          echo "  • User: ${USER}"
+          echo "  • Workspace: ~/Desktop/workspace"
+          echo "  • Session Duration: 6 hours max"
+          echo "  • Auto-restart: Enabled"
+          echo ""
+          echo "🔄 Monitoring VNC connection..."
           echo ""
           
+          # Keep-alive loop with VNC health checks
           while true; do
             sleep 3600
             
-            if ! pgrep -f "Xtigervnc.*:1" > /dev/null; then
-              echo "[$(date)] 🔄 VNC connection lost, restarting..."
-              # CRITICAL FIX REPEATED FOR LOOP: Explicitly setting HOME again here
-              sudo -H -u sandsneha bash -c 'export HOME=/home/sandsneha && export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+            # Check if VNC is still running
+            if ! pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️  VNC connection lost, restarting..."
+              
+              export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+              vncserver ${{ env.VNC_DISPLAY }} \
+                -geometry ${{ env.VNC_GEOMETRY }} \
+                -depth ${{ env.VNC_DEPTH }} \
+                -localhost no
+              
+              if pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ VNC server restarted successfully"
+              else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ VNC restart failed"
+              fi
             fi
           done
