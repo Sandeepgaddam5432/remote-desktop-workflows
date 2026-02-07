@@ -64,13 +64,23 @@ jobs:
         run: |
           set -e
           echo "Starting VNC Server..."
+          
+          # Create .Xauthority file first
+          sudo -u sandsneha touch /home/sandsneha/.Xauthority
+          sudo chown sandsneha:sandsneha /home/sandsneha/.Xauthority
+          
+          # Start VNC server
           sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth
-          sleep 3
-          if sudo -u sandsneha vncserver -list | grep -q ":1"; then
+          
+          sleep 5
+          
+          # Check if VNC process is running (better than vncserver -list)
+          if pgrep -u sandsneha Xtigervnc > /dev/null; then
             echo "✅ VNC Server running on port 5901"
-            sudo -u sandsneha vncserver -list
+            ps aux | grep -v grep | grep Xtigervnc
           else
             echo "❌ VNC failed to start"
+            cat /home/sandsneha/.vnc/*.log 2>/dev/null || true
             exit 1
           fi
 
@@ -322,7 +332,7 @@ jobs:
           echo "═════════════════════════════════════════════════════════════"
           echo ""
           check_health() {
-            if ! sudo -u sandsneha vncserver -list | grep -q ":1"; then
+            if ! pgrep -u sandsneha Xtigervnc > /dev/null; then
               echo "⚠️  Restarting VNC..."
               sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
             fi
