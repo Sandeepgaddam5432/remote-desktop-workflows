@@ -1,348 +1,156 @@
-name: 🖥️ Ubuntu Cloud Workstation (100% Research-Backed)
+name: 🖥️ Ubuntu Cloud Workstation - ABSOLUTE FINAL
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 env:
   WORKSPACE_USER: sandsneha
-  VNC_DISPLAY: :1
-  VNC_PORT: 5901
-  BACKUP_REGISTRY_REPO: backup-files
   WORKSPACE_DIR: /home/sandsneha/Desktop/sand
 
 jobs:
-  cloud-workstation:
+  workstation:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     
     steps:
-      - name: 📦 Install XFCE Desktop
+      - name: 📦 Install Desktop
         run: |
-          set -e
-          echo "Installing XFCE4 Desktop & TigerVNC..."
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-terminal tigervnc-standalone-server tigervnc-common dbus-x11 inotify-tools git curl wget jq
-          echo "✅ Desktop installed"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-terminal tigervnc-standalone-server dbus-x11 inotify-tools git curl wget jq
+          echo "✅ Installed"
 
       - name: 👤 Create User
         env:
-          USER_PASSWORD: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
+          PASS: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
         run: |
-          set -e
-          echo "Creating user: sandsneha"
           sudo useradd -m -s /bin/bash -G sudo sandsneha
-          sudo chown -R sandsneha:sandsneha /home/sandsneha
-          echo "sandsneha:${USER_PASSWORD}" | sudo chpasswd
+          echo "sandsneha:${PASS}" | sudo chpasswd
           echo "sandsneha ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/sandsneha
           sudo chmod 0440 /etc/sudoers.d/sandsneha
-          echo "✅ User created"
+          sudo chown -R sandsneha:sandsneha /home/sandsneha
 
-      - name: 🔐 Configure VNC (XFCE Failsafe Fix)
+      - name: 🔐 Configure VNC
         env:
-          USER_PASSWORD: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
+          PASS: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
         run: |
-          set -e
-          echo "Configuring VNC with failsafe session fix..."
-          
           sudo -u sandsneha mkdir -p /home/sandsneha/.vnc
-          
-          echo "${USER_PASSWORD}" | sudo -u sandsneha vncpasswd -f > /tmp/vncpasswd
-          sudo mv /tmp/vncpasswd /home/sandsneha/.vnc/passwd
+          echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /tmp/p
+          sudo mv /tmp/p /home/sandsneha/.vnc/passwd
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           
-          sudo -u sandsneha mkdir -p /home/sandsneha/.config
-          sudo -u sandsneha mkdir -p /home/sandsneha/.cache
-          sudo -u sandsneha touch /home/sandsneha/.Xresources
+          cat > /tmp/xs << 'EOF'
+          #!/bin/bash
+          export DISPLAY=:1
+          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          xsetroot -solid grey
+          /usr/bin/startxfce4
+          EOF
           
-          echo '#!/bin/sh' > /tmp/xstartup
-          echo '' >> /tmp/xstartup
-          echo 'export XDG_CONFIG_DIRS=/etc/xdg' >> /tmp/xstartup
-          echo 'export XDG_DATA_DIRS=/usr/share:/usr/local/share' >> /tmp/xstartup
-          echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /tmp/xstartup
-          echo '' >> /tmp/xstartup
-          echo 'unset SESSION_MANAGER' >> /tmp/xstartup
-          echo 'unset DBUS_SESSION_BUS_ADDRESS' >> /tmp/xstartup
-          echo '' >> /tmp/xstartup
-          echo 'if [ -r $HOME/.Xresources ]; then' >> /tmp/xstartup
-          echo '    xrdb $HOME/.Xresources' >> /tmp/xstartup
-          echo 'fi' >> /tmp/xstartup
-          echo '' >> /tmp/xstartup
-          echo 'dbus-launch --exit-with-session startxfce4 &' >> /tmp/xstartup
-          
-          sudo mv /tmp/xstartup /home/sandsneha/.vnc/xstartup
+          sudo mv /tmp/xs /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
           sudo chmod +x /home/sandsneha/.vnc/xstartup
-          
           sudo -u sandsneha mkdir -p /home/sandsneha/Desktop/sand
-          sudo chown -R sandsneha:sandsneha /home/sandsneha
-          
-          echo "✅ VNC configured with failsafe fix"
 
-      - name: 🚀 Start VNC Server
+      - name: 🚀 Start VNC
         run: |
-          set -e
-          echo "Starting VNC Server..."
-          
           sudo -u sandsneha touch /home/sandsneha/.Xauthority
-          sudo chown sandsneha:sandsneha /home/sandsneha/.Xauthority
-          
           sudo mkdir -p /run/user/$(id -u sandsneha)
           sudo chown sandsneha:sandsneha /run/user/$(id -u sandsneha)
-          sudo chmod 700 /run/user/$(id -u sandsneha)
-          
-          sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth
-          
-          sleep 5
-          
-          if pgrep -u sandsneha Xtigervnc > /dev/null; then
-            echo "✅ VNC Server running on port 5901"
-            ps aux | grep -v grep | grep Xtigervnc
-          else
-            echo "❌ VNC failed to start"
-            cat /home/sandsneha/.vnc/*.log 2>/dev/null || true
-            exit 1
-          fi
+          sudo -u sandsneha DISPLAY=:1 vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          sleep 3
+          pgrep Xtigervnc && echo "✅ VNC running" || (cat /home/sandsneha/.vnc/*.log && exit 1)
 
-      - name: ☁️ Setup Cloudflare Tunnel
+      - name: ☁️ Cloudflare Tunnel
         run: |
-          set -e
-          echo "Installing cloudflared..."
-          
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
-          rm cloudflared-linux-amd64.deb
-          
-          echo "Starting tunnel..."
-          
-          nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
-          
-          echo "Waiting for tunnel..."
-          TUNNEL_HOST=""
-          
-          for i in {1..60}; do
-            if [ -f /tmp/cloudflare.log ] && grep -q "https://.*trycloudflare.com" /tmp/cloudflare.log; then
-              TUNNEL_HOST=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
-              break
-            fi
-            sleep 1
+          nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cf.log 2>&1 &
+          for i in {1..30}; do
+            grep -q "trycloudflare.com" /tmp/cf.log 2>/dev/null && break
+            sleep 2
           done
-          
-          if [ -z "$TUNNEL_HOST" ]; then
-            echo "❌ Tunnel failed"
-            cat /tmp/cloudflare.log
-            exit 1
-          fi
-          
+          H=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cf.log | head -1)
           echo ""
-          echo "═════════════════════════════════════════════════════════════"
-          echo "✅ TUNNEL READY!"
-          echo "═════════════════════════════════════════════════════════════"
-          echo ""
-          echo "🎯 Run on LOCAL machine:"
-          echo ""
-          echo "cloudflared access tcp --hostname $TUNNEL_HOST --url 127.0.0.1:5901"
-          echo ""
-          echo "═════════════════════════════════════════════════════════════"
-          echo "📌 VNC Viewer: localhost:5901"
-          echo "🔑 Password: <your VNC_PASSWORD>"
-          echo "═════════════════════════════════════════════════════════════"
-          echo ""
+          echo "═══════════════════════════════════════"
+          echo "🎯 LOCAL COMMAND:"
+          echo "cloudflared access tcp --hostname $H --url 127.0.0.1:5901"
+          echo "═══════════════════════════════════════"
+          echo "📌 VNC: localhost:5901"
+          echo "═══════════════════════════════════════"
 
-      - name: 🔄 Restore Projects
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: 🐍 Python
+        run: sudo apt-get install -y python3 python3-pip python3-venv && python3 --version
+
+      - name: 📗 Node.js
+        run: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs && node --version
+
+      - name: 💻 VS Code
         run: |
-          set -e
-          echo "Restoring projects..."
-          
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > p.gpg
+          sudo install -o root -g root -m 644 p.gpg /etc/apt/keyrings/packages.microsoft.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
+          sudo apt-get update -qq && sudo apt-get install -y code
+
+      - name: 🌌 Antigravity IDE
+        run: |
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/ag.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/ag.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/ag.list
+          sudo apt-get update -qq && sudo apt-get install -y antigravity && antigravity --version
+
+      - name: 🔄 Restore
+        env:
+          T: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
           cd /home/sandsneha
-          
           sudo -u sandsneha git config --global user.name "sandsneha"
           sudo -u sandsneha git config --global user.email "sandsneha@github.com"
-          
-          REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/sandsneha/backup-files.git"
-          
-          if sudo -u sandsneha git ls-remote "$REGISTRY_URL" &>/dev/null; then
-            echo "Found backup registry"
-            sudo -u sandsneha git clone --depth=1 "$REGISTRY_URL" /tmp/backup-registry
-            if [ -f /tmp/backup-registry/README.md ]; then
-              echo "Restoring projects..."
-              grep -oP '^\s*-\s*\K[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+' /tmp/backup-registry/README.md | while read repo; do
-                PROJECT_NAME=$(basename "$repo")
-                PROJECT_URL="https://x-access-token:${GH_TOKEN}@github.com/${repo}.git"
-                echo "  Restoring: $PROJECT_NAME"
-                if sudo -u sandsneha git clone --depth=1 "$PROJECT_URL" "/home/sandsneha/Desktop/sand/$PROJECT_NAME" 2>/dev/null; then
-                  echo "    ✅ Done"
-                else
-                  echo "    ⚠️  Skipped"
-                fi
-              done
-            fi
-            sudo rm -rf /tmp/backup-registry
+          U="https://x-access-token:${T}@github.com/sandsneha/backup-files.git"
+          if sudo -u sandsneha git ls-remote "$U" &>/dev/null; then
+            sudo -u sandsneha git clone --depth=1 "$U" /tmp/br
+            [ -f /tmp/br/README.md ] && grep -oP '^\s*-\s*\K\S+' /tmp/br/README.md | while read r; do
+              sudo -u sandsneha git clone --depth=1 "https://x-access-token:${T}@github.com/${r}.git" "/home/sandsneha/Desktop/sand/$(basename $r)" 2>/dev/null || true
+            done
+            rm -rf /tmp/br
           else
-            echo "Creating new registry..."
-            sudo -u sandsneha mkdir -p /tmp/new-registry
-            echo '# 🗂️ Backup Registry' | sudo -u sandsneha tee /tmp/new-registry/README.md
-            echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
-            echo 'Auto-managed project list.' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
-            echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
-            echo '## Projects:' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
-            echo '' | sudo -u sandsneha tee -a /tmp/new-registry/README.md
-            cd /tmp/new-registry
-            sudo -u sandsneha git init
-            sudo -u sandsneha git add README.md
-            sudo -u sandsneha git commit -m "Initialize backup registry"
-            sudo -u sandsneha git branch -M main
-            curl -s -X POST -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/user/repos -d '{"name":"backup-files","private":true}' > /dev/null 2>&1 || true
-            sleep 3
-            sudo -u sandsneha git remote add origin "$REGISTRY_URL"
-            sudo -u sandsneha git push -u origin main 2>/dev/null || echo "⚠️  Push timed out"
-            cd /
-            sudo rm -rf /tmp/new-registry
-            echo "✅ Registry created"
-          fi
-          echo "✅ Restore done"
-
-      - name: 🐍 Install Python
-        run: |
-          set -e
-          echo "Installing Python..."
-          sudo apt-get install -y python3 python3-pip python3-venv
-          python3 --version
-          echo "✅ Python ready"
-
-      - name: 📗 Install Node.js
-        run: |
-          set -e
-          echo "Installing Node.js..."
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-          sudo apt-get install -y nodejs
-          node --version
-          npm --version
-          echo "✅ Node.js ready"
-
-      - name: 💻 Install VS Code
-        run: |
-          set -e
-          echo "Installing VS Code..."
-          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-          sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-          sudo sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
-          rm packages.microsoft.gpg
-          sudo apt-get update -qq
-          sudo apt-get install -y code
-          echo "✅ VS Code ready"
-
-      - name: 🌌 Install Google Antigravity IDE
-        run: |
-          set -e
-          echo "Installing Google Antigravity IDE..."
-          
-          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/antigravity-repo-key.gpg
-          
-          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
-          
-          sudo apt-get update -qq
-          sudo apt-get install -y antigravity
-          
-          if command -v antigravity &> /dev/null; then
-            antigravity --version
-            echo "✅ Antigravity IDE installed successfully"
-          else
-            echo "❌ Antigravity IDE installation failed"
-            exit 1
+            sudo -u sandsneha mkdir /tmp/nr
+            echo '# Backup' | sudo -u sandsneha tee /tmp/nr/README.md
+            cd /tmp/nr && sudo -u sandsneha git init && sudo -u sandsneha git add . && sudo -u sandsneha git commit -m "init" && sudo -u sandsneha git branch -M main
+            curl -s -X POST -H "Authorization: token ${T}" https://api.github.com/user/repos -d '{"name":"backup-files","private":true}' >/dev/null
+            sleep 2 && sudo -u sandsneha git remote add origin "$U" && sudo -u sandsneha git push -u origin main 2>/dev/null || true
+            rm -rf /tmp/nr
           fi
 
-      - name: 👁️ Create Backup Watcher Script
-        run: |
-          set -e
-          echo "Creating backup watcher..."
-          echo '#!/bin/bash' > /tmp/backup-watcher.sh
-          echo 'set -e' >> /tmp/backup-watcher.sh
-          echo 'WORKSPACE_DIR="/home/sandsneha/Desktop/sand"' >> /tmp/backup-watcher.sh
-          echo 'WORKSPACE_USER="sandsneha"' >> /tmp/backup-watcher.sh
-          echo 'BACKUP_REGISTRY_REPO="backup-files"' >> /tmp/backup-watcher.sh
-          echo 'LOCKFILE="/tmp/backup.lock"' >> /tmp/backup-watcher.sh
-          echo 'update_registry() {' >> /tmp/backup-watcher.sh
-          echo '    local PROJECT_NAME=$1' >> /tmp/backup-watcher.sh
-          echo '    local PROJECT_REPO="${WORKSPACE_USER}/${PROJECT_NAME}"' >> /tmp/backup-watcher.sh
-          echo '    local REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/${WORKSPACE_USER}/${BACKUP_REGISTRY_REPO}.git"' >> /tmp/backup-watcher.sh
-          echo '    exec 200>"$LOCKFILE"' >> /tmp/backup-watcher.sh
-          echo '    flock -x 200' >> /tmp/backup-watcher.sh
-          echo '    cd /tmp' >> /tmp/backup-watcher.sh
-          echo '    rm -rf backup-registry-temp' >> /tmp/backup-watcher.sh
-          echo '    git clone --depth=1 "$REGISTRY_URL" backup-registry-temp 2>/dev/null || { flock -u 200; return 1; }' >> /tmp/backup-watcher.sh
-          echo '    cd backup-registry-temp' >> /tmp/backup-watcher.sh
-          echo '    if ! grep -q "^- ${PROJECT_REPO}$" README.md 2>/dev/null; then' >> /tmp/backup-watcher.sh
-          echo '        echo "- ${PROJECT_REPO}" >> README.md' >> /tmp/backup-watcher.sh
-          echo '        git add README.md' >> /tmp/backup-watcher.sh
-          echo '        git commit -m "Add: ${PROJECT_NAME}"' >> /tmp/backup-watcher.sh
-          echo '        git push origin main 2>/dev/null' >> /tmp/backup-watcher.sh
-          echo '        echo "  ✅ Registry updated"' >> /tmp/backup-watcher.sh
-          echo '    fi' >> /tmp/backup-watcher.sh
-          echo '    cd /tmp' >> /tmp/backup-watcher.sh
-          echo '    rm -rf backup-registry-temp' >> /tmp/backup-watcher.sh
-          echo '    flock -u 200' >> /tmp/backup-watcher.sh
-          echo '}' >> /tmp/backup-watcher.sh
-          echo 'process_new_directory() {' >> /tmp/backup-watcher.sh
-          echo '    local DIR_PATH=$1' >> /tmp/backup-watcher.sh
-          echo '    local PROJECT_NAME=$(basename "$DIR_PATH")' >> /tmp/backup-watcher.sh
-          echo '    local PROJECT_URL="https://x-access-token:${GH_TOKEN}@github.com/${WORKSPACE_USER}/${PROJECT_NAME}.git"' >> /tmp/backup-watcher.sh
-          echo '    echo "New: $PROJECT_NAME"' >> /tmp/backup-watcher.sh
-          echo '    sleep 15' >> /tmp/backup-watcher.sh
-          echo '    [ -z "$(ls -A "$DIR_PATH" 2>/dev/null)" ] && return' >> /tmp/backup-watcher.sh
-          echo '    curl -s -X POST -H "Authorization: token ${GH_TOKEN}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/user/repos -d "{\"name\":\"${PROJECT_NAME}\",\"private\":true}" > /dev/null 2>&1' >> /tmp/backup-watcher.sh
-          echo '    sleep 3' >> /tmp/backup-watcher.sh
-          echo '    cd "$DIR_PATH"' >> /tmp/backup-watcher.sh
-          echo '    [ ! -d .git ] && git init && git add . && git commit -m "Initial" 2>/dev/null && git branch -M main && git remote add origin "$PROJECT_URL"' >> /tmp/backup-watcher.sh
-          echo '    git push -u origin main 2>/dev/null && update_registry "$PROJECT_NAME"' >> /tmp/backup-watcher.sh
-          echo '}' >> /tmp/backup-watcher.sh
-          echo 'echo "Watcher active"' >> /tmp/backup-watcher.sh
-          echo 'inotifywait -m -e create --format "%w%f" "$WORKSPACE_DIR" 2>/dev/null | while read NEW_PATH; do' >> /tmp/backup-watcher.sh
-          echo '    [ -d "$NEW_PATH" ] && process_new_directory "$NEW_PATH" &' >> /tmp/backup-watcher.sh
-          echo 'done' >> /tmp/backup-watcher.sh
-          echo "✅ Script created"
-
-      - name: 👁️ Deploy Backup Watcher
+      - name: 👁️ Backup Watcher
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          T: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          sudo sed -i "s|\${GH_TOKEN}|${GH_TOKEN}|g" /tmp/backup-watcher.sh
-          sudo mv /tmp/backup-watcher.sh /home/sandsneha/backup-watcher.sh
-          sudo chown sandsneha:sandsneha /home/sandsneha/backup-watcher.sh
-          sudo chmod +x /home/sandsneha/backup-watcher.sh
-          sudo -u sandsneha nohup /home/sandsneha/backup-watcher.sh > /tmp/backup-watcher.log 2>&1 &
-          sleep 2
-          echo "✅ Watcher running"
+          cat > /tmp/w.sh << 'SCRIPT'
+          #!/bin/bash
+          D="/home/sandsneha/Desktop/sand"
+          U="sandsneha"
+          process() {
+            N=$(basename "$1")
+            sleep 15
+            [ -z "$(ls -A "$1")" ] && return
+            curl -s -X POST -H "Authorization: token ${T}" https://api.github.com/user/repos -d "{\"name\":\"$N\",\"private\":true}" >/dev/null
+            cd "$1" && git init && git add . && git commit -m "init" && git branch -M main
+            git remote add origin "https://x-access-token:${T}@github.com/$U/$N.git"
+            git push -u origin main 2>/dev/null && {
+              flock /tmp/b.lock -c "cd /tmp && rm -rf br && git clone --depth=1 https://x-access-token:${T}@github.com/$U/backup-files.git br && cd br && echo \"- $U/$N\" >> README.md && git add . && git commit -m \"Add $N\" && git push" 2>/dev/null
+            }
+          }
+          inotifywait -m -e create --format '%w%f' "$D" | while read P; do
+            [ -d "$P" ] && process "$P" &
+          done
+          SCRIPT
+          sudo sed -i "s|\${T}|${T}|g" /tmp/w.sh
+          sudo mv /tmp/w.sh /home/sandsneha/w.sh
+          sudo chown sandsneha:sandsneha /home/sandsneha/w.sh
+          sudo chmod +x /home/sandsneha/w.sh
+          sudo -u sandsneha nohup /home/sandsneha/w.sh >/dev/null 2>&1 &
 
       - name: 💚 Keep Alive
         run: |
-          set -e
-          echo ""
-          echo "═════════════════════════════════════════════════════════════"
-          echo "✅ WORKSTATION READY!"
-          echo "═════════════════════════════════════════════════════════════"
-          echo ""
-          echo "Installed:"
-          echo "  • XFCE Desktop (with failsafe fix)"
-          echo "  • Python, Node.js, VS Code"
-          echo "  • Google Antigravity IDE ✅"
-          echo "  • Auto-backup system"
-          echo ""
-          echo "═════════════════════════════════════════════════════════════"
-          echo ""
-          check_health() {
-            pgrep -u sandsneha Xtigervnc > /dev/null || sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
-            pgrep -f "backup-watcher.sh" > /dev/null || sudo -u sandsneha nohup /home/sandsneha/backup-watcher.sh > /tmp/backup-watcher.log 2>&1 &
-          }
-          COUNTER=0
-          while true; do
-            sleep 30
-            COUNTER=$((COUNTER + 1))
-            [ $((COUNTER % 60)) -eq 0 ] && check_health
-            [ $COUNTER -eq 660 ] && echo "⚠️  30min remaining"
-          done
+          echo "✅ READY"
+          while true; do sleep 3600; pgrep Xtigervnc || sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no; done
