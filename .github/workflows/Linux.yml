@@ -118,7 +118,7 @@ jobs:
             cd /tmp/nr && sudo -u sandsneha git init && sudo -u sandsneha git add . && sudo -u sandsneha git commit -m "init" && sudo -u sandsneha git branch -M main
             curl -s -X POST -H "Authorization: token ${T}" https://api.github.com/user/repos -d '{"name":"backup-files","private":true}' >/dev/null
             sleep 2 && sudo -u sandsneha git remote add origin "$U" && sudo -u sandsneha git push -u origin main 2>/dev/null || true
-            rm -rf /tmp/nr
+            sudo rm -rf /tmp/nr
           fi
 
       - name: 👁️ Backup Watcher
@@ -137,7 +137,7 @@ jobs:
             cd "$1" && git init && git add . && git commit -m "init" && git branch -M main
             git remote add origin "https://x-access-token:${T}@github.com/$U/$N.git"
             git push -u origin main 2>/dev/null && {
-              flock /tmp/b.lock -c "cd /tmp && rm -rf br && git clone --depth=1 https://x-access-token:${T}@github.com/$U/backup-files.git br && cd br && echo \"- $U/$N\" >> README.md && git add . && git commit -m \"Add $N\" && git push" 2>/dev/null
+              flock /tmp/b.lock -c "cd /tmp && rm -rf br && git clone --depth=1 https://x-access-token:${T}@github.com/$U/backup-files.git br && cd br && echo \"- $U/$N\" >> README.md && git add . && git commit -m \"Add $N\" && git push && cd /tmp && rm -rf br" 2>/dev/null
             }
           }
           inotifywait -m -e create --format '%w%f' "$D" | while read P; do
