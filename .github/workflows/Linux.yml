@@ -1,11 +1,7 @@
-name: 🖥️ Ubuntu Cloud Workstation - ABSOLUTE FINAL
+name: 🖥️ Ubuntu Cloud Workstation - STABLE VERSION
 
 on:
   workflow_dispatch:
-
-env:
-  WORKSPACE_USER: sandsneha
-  WORKSPACE_DIR: /home/sandsneha/Desktop/sand
 
 jobs:
   workstation:
@@ -13,164 +9,273 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: 📦 Install Desktop
+      - name: 📦 Install MATE Desktop & VNC
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-terminal tigervnc-standalone-server dbus-x11 inotify-tools git curl wget jq
-          echo "✅ Installed"
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            mate-desktop-environment-core \
+            mate-terminal \
+            tigervnc-standalone-server \
+            tigervnc-common \
+            dbus-x11 \
+            inotify-tools \
+            git curl wget jq \
+            firefox
+          echo "✅ Desktop installed"
 
-      - name: 👤 Create User
-        env:
-          PASS: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
+      - name: 👤 Setup User
         run: |
+          PASS="${{ secrets.VNC_PASSWORD }}"
+          if [ -z "$PASS" ]; then
+            PASS="P@ssw0rd123!"
+          fi
+          
           sudo useradd -m -s /bin/bash -G sudo sandsneha
           echo "sandsneha:${PASS}" | sudo chpasswd
           echo "sandsneha ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/sandsneha
           sudo chmod 0440 /etc/sudoers.d/sandsneha
+          
+          sudo mkdir -p /home/sandsneha/.vnc
+          echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
+          sudo chmod 600 /home/sandsneha/.vnc/passwd
           sudo chown -R sandsneha:sandsneha /home/sandsneha
 
-      - name: 🔐 Configure VNC
-        env:
-          PASS: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
+      - name: 🔐 Create VNC Startup Script
         run: |
-          sudo -u sandsneha mkdir -p /home/sandsneha/.vnc
-          echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /tmp/p
-          sudo mv /tmp/p /home/sandsneha/.vnc/passwd
-          sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
-          sudo chmod 600 /home/sandsneha/.vnc/passwd
-          
-          cat > /tmp/xs << 'XSTARTUP'
-          #!/bin/bash
+          sudo tee /home/sandsneha/.vnc/xstartup > /dev/null << 'ENDSCRIPT'
+          #!/bin/sh
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
-          export DISPLAY=:1
+          export XKL_XMODMAP_DISABLE=1
+          export XDG_CURRENT_DESKTOP="MATE"
+          export XDG_SESSION_TYPE=x11
+          [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
           [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
           xsetroot -solid grey
-          exec dbus-launch --exit-with-session startxfce4
-          XSTARTUP
+          vncconfig -iconic &
+          exec mate-session
+          ENDSCRIPT
           
-          sudo mv /tmp/xs /home/sandsneha/.vnc/xstartup
-          sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
           sudo chmod +x /home/sandsneha/.vnc/xstartup
-          sudo -u sandsneha mkdir -p /home/sandsneha/Desktop/sand
+          sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
+          sudo mkdir -p /home/sandsneha/Desktop/sand
+          sudo chown -R sandsneha:sandsneha /home/sandsneha/Desktop
 
-      - name: 🚀 Start VNC
+      - name: 🚀 Start VNC Server
         run: |
-          sudo -u sandsneha touch /home/sandsneha/.Xauthority
-          sudo mkdir -p /run/user/$(id -u sandsneha)
-          sudo chown sandsneha:sandsneha /run/user/$(id -u sandsneha)
-          export XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha)
-          sudo -u sandsneha XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha) DISPLAY=:1 vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          sudo mkdir -p /run/user/1001
+          sudo chown sandsneha:sandsneha /run/user/1001
+          sudo chmod 700 /run/user/1001
+          
+          sudo -u sandsneha bash -c 'export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+          
           sleep 5
-          pgrep Xtigervnc && echo "✅ VNC running" || (cat /home/sandsneha/.vnc/*.log && exit 1)
+          
+          if pgrep -f "Xtigervnc.*:1" > /dev/null; then
+            echo "✅ VNC Server is running on :1"
+          else
+            echo "❌ VNC Server failed to start"
+            cat /home/sandsneha/.vnc/*.log
+            exit 1
+          fi
 
-      - name: ☁️ Cloudflare Tunnel
+      - name: ☁️ Setup Cloudflare Tunnel
         run: |
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
-          nohup cloudflared tunnel --url tcp://localhost:5901 > /tmp/cf.log 2>&1 &
-          sleep 5
-          for i in {1..30}; do
-            if grep -q "trycloudflare.com" /tmp/cf.log 2>/dev/null; then
-              break
+          
+          cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
+          
+          sleep 10
+          
+          for i in {1..40}; do
+            if grep -q "https://" /tmp/cloudflare.log; then
+              HOSTNAME=$(grep -oP "https://\K[^[:space:]]+" /tmp/cloudflare.log | grep trycloudflare.com | head -1)
+              if [ -n "$HOSTNAME" ]; then
+                echo "$HOSTNAME" > /tmp/cf_host.txt
+                echo "✅ Tunnel created: $HOSTNAME"
+                break
+              fi
             fi
             sleep 2
           done
-          H=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cf.log | head -1)
-          echo "$H" > /tmp/cf_hostname.txt
-          echo "✅ Cloudflared tunnel started"
 
-      - name: 🐍 Python
-        run: sudo apt-get install -y python3 python3-pip python3-venv && python3 --version
-
-      - name: 📗 Node.js
-        run: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs && node --version
-
-      - name: 💻 VS Code
+      - name: 🐍 Install Python
         run: |
-          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > p.gpg
-          sudo install -o root -g root -m 644 p.gpg /etc/apt/keyrings/packages.microsoft.gpg
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list
-          sudo apt-get update -qq && sudo apt-get install -y code
+          sudo apt-get install -y python3 python3-pip python3-venv
+          python3 --version
 
-      - name: 🌌 Antigravity IDE
+      - name: 📗 Install Node.js
         run: |
-          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/ag.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/ag.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/ag.list
-          sudo apt-get update -qq && sudo apt-get install -y antigravity && antigravity --version
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version
 
-      - name: 🔄 Restore
-        env:
-          T: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: 💻 Install VS Code
         run: |
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
+          sudo install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y code
+
+      - name: 🌌 Install Antigravity IDE
+        run: |
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/antigravity.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y antigravity
+          antigravity --version
+
+      - name: 🔄 Restore Projects
+        run: |
+          TOKEN="${{ secrets.GH_TOKEN }}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          fi
+          
           cd /home/sandsneha
           sudo -u sandsneha git config --global user.name "sandsneha"
           sudo -u sandsneha git config --global user.email "sandsneha@github.com"
-          U="https://x-access-token:${T}@github.com/sandsneha/backup-files.git"
-          if sudo -u sandsneha git ls-remote "$U" &>/dev/null; then
-            sudo -u sandsneha git clone --depth=1 "$U" /tmp/br
-            [ -f /tmp/br/README.md ] && grep -oP '^\s*-\s*\K\S+' /tmp/br/README.md | while read r; do
-              sudo -u sandsneha git clone --depth=1 "https://x-access-token:${T}@github.com/${r}.git" "/home/sandsneha/Desktop/sand/$(basename $r)" 2>/dev/null || true
-            done
-            rm -rf /tmp/br
+          
+          BACKUP_REPO="https://x-access-token:${TOKEN}@github.com/sandsneha/backup-files.git"
+          
+          if sudo -u sandsneha git ls-remote "$BACKUP_REPO" &>/dev/null; then
+            sudo -u sandsneha git clone --depth=1 "$BACKUP_REPO" /tmp/backup-restore
+            
+            if [ -f /tmp/backup-restore/README.md ]; then
+              grep -oP '^\s*-\s*\K\S+' /tmp/backup-restore/README.md | while read repo; do
+                REPO_NAME=$(basename "$repo")
+                sudo -u sandsneha git clone --depth=1 "https://x-access-token:${TOKEN}@github.com/${repo}.git" "/home/sandsneha/Desktop/sand/${REPO_NAME}" 2>/dev/null || true
+              done
+            fi
+            
+            rm -rf /tmp/backup-restore
           else
-            sudo -u sandsneha mkdir /tmp/nr
-            echo '# Backup' | sudo -u sandsneha tee /tmp/nr/README.md
-            cd /tmp/nr && sudo -u sandsneha git init && sudo -u sandsneha git add . && sudo -u sandsneha git commit -m "init" && sudo -u sandsneha git branch -M main
-            curl -s -X POST -H "Authorization: token ${T}" https://api.github.com/user/repos -d '{"name":"backup-files","private":true}' >/dev/null
-            sleep 2 && sudo -u sandsneha git remote add origin "$U" && sudo -u sandsneha git push -u origin main 2>/dev/null || true
-            sudo rm -rf /tmp/nr
+            sudo -u sandsneha mkdir -p /tmp/new-backup
+            echo '# Backup Repository' | sudo -u sandsneha tee /tmp/new-backup/README.md > /dev/null
+            
+            cd /tmp/new-backup
+            sudo -u sandsneha git init
+            sudo -u sandsneha git add .
+            sudo -u sandsneha git commit -m "Initial commit"
+            sudo -u sandsneha git branch -M main
+            
+            curl -s -X POST \
+              -H "Authorization: token ${TOKEN}" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/user/repos \
+              -d '{"name":"backup-files","private":true}' > /dev/null
+            
+            sleep 3
+            sudo -u sandsneha git remote add origin "$BACKUP_REPO"
+            sudo -u sandsneha git push -u origin main 2>/dev/null || true
+            
+            rm -rf /tmp/new-backup
           fi
 
-      - name: 👁️ Backup Watcher
-        env:
-          T: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: 👁️ Start Backup Watcher
         run: |
-          cat > /tmp/w.sh << 'WATCHSCRIPT'
+          TOKEN="${{ secrets.GH_TOKEN }}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          fi
+          
+          sudo tee /home/sandsneha/backup-watcher.sh > /dev/null << 'WATCHERSCRIPT'
           #!/bin/bash
-          D="/home/sandsneha/Desktop/sand"
-          U="sandsneha"
-          process() {
-            N=$(basename "$1")
+          WATCH_DIR="/home/sandsneha/Desktop/sand"
+          USERNAME="sandsneha"
+          
+          process_new_folder() {
+            FOLDER_PATH="$1"
+            FOLDER_NAME=$(basename "$FOLDER_PATH")
+            
             sleep 15
-            [ -z "$(ls -A "$1")" ] && return
-            curl -s -X POST -H "Authorization: token ${T}" https://api.github.com/user/repos -d "{\"name\":\"$N\",\"private\":true}" >/dev/null
-            cd "$1" && git init && git add . && git commit -m "init" && git branch -M main
-            git remote add origin "https://x-access-token:${T}@github.com/$U/$N.git"
-            git push -u origin main 2>/dev/null && {
-              flock /tmp/b.lock -c "cd /tmp && rm -rf br && git clone --depth=1 https://x-access-token:${T}@github.com/$U/backup-files.git br && cd br && echo \"- $U/$N\" >> README.md && git add . && git commit -m \"Add $N\" && git push && cd /tmp && rm -rf br" 2>/dev/null
-            }
+            
+            if [ -z "$(ls -A "$FOLDER_PATH")" ]; then
+              return
+            fi
+            
+            curl -s -X POST \
+              -H "Authorization: token GITHUB_TOKEN_PLACEHOLDER" \
+              -H "Content-Type: application/json" \
+              https://api.github.com/user/repos \
+              -d "{\"name\":\"$FOLDER_NAME\",\"private\":true}" > /dev/null
+            
+            cd "$FOLDER_PATH"
+            git init
+            git add .
+            git commit -m "Initial commit"
+            git branch -M main
+            git remote add origin "https://x-access-token:GITHUB_TOKEN_PLACEHOLDER@github.com/$USERNAME/$FOLDER_NAME.git"
+            git push -u origin main 2>/dev/null
+            
+            if [ $? -eq 0 ]; then
+              flock /tmp/backup.lock -c "
+                cd /tmp
+                rm -rf backup-temp
+                git clone --depth=1 https://x-access-token:GITHUB_TOKEN_PLACEHOLDER@github.com/$USERNAME/backup-files.git backup-temp
+                cd backup-temp
+                echo \"- $USERNAME/$FOLDER_NAME\" >> README.md
+                git add .
+                git commit -m \"Add $FOLDER_NAME\"
+                git push
+                cd /tmp
+                rm -rf backup-temp
+              " 2>/dev/null
+            fi
           }
-          inotifywait -m -e create --format '%w%f' "$D" | while read P; do
-            [ -d "$P" ] && process "$P" &
+          
+          inotifywait -m -e create --format '%w%f' "$WATCH_DIR" | while read NEW_PATH; do
+            if [ -d "$NEW_PATH" ]; then
+              process_new_folder "$NEW_PATH" &
+            fi
           done
-          WATCHSCRIPT
-          sudo sed -i "s|\${T}|${T}|g" /tmp/w.sh
-          sudo mv /tmp/w.sh /home/sandsneha/w.sh
-          sudo chown sandsneha:sandsneha /home/sandsneha/w.sh
-          sudo chmod +x /home/sandsneha/w.sh
-          sudo -u sandsneha nohup /home/sandsneha/w.sh >/dev/null 2>&1 &
+          WATCHERSCRIPT
+          
+          sudo sed -i "s|GITHUB_TOKEN_PLACEHOLDER|${TOKEN}|g" /home/sandsneha/backup-watcher.sh
+          sudo chmod +x /home/sandsneha/backup-watcher.sh
+          sudo chown sandsneha:sandsneha /home/sandsneha/backup-watcher.sh
+          
+          sudo -u sandsneha nohup /home/sandsneha/backup-watcher.sh > /dev/null 2>&1 &
 
-      - name: 💚 Keep Alive
+      - name: 💚 Keep Alive & Display Info
         run: |
-          H=$(cat /tmp/cf_hostname.txt 2>/dev/null || echo "")
+          CLOUDFLARE_HOST=$(cat /tmp/cf_host.txt 2>/dev/null || echo "")
+          
           echo ""
-          echo "═══════════════════════════════════════"
-          echo "✅ WORKSTATION READY"
-          echo "═══════════════════════════════════════"
-          if [ -n "$H" ]; then
-            echo "🎯 LOCAL COMMAND:"
-            echo "cloudflared access tcp --hostname $H --url 127.0.0.1:5901"
-            echo "═══════════════════════════════════════"
-            echo "📌 VNC: localhost:5901"
-            echo "🔑 Password: Check VNC_PASSWORD secret or default P@ssw0rd123!"
+          echo "╔═══════════════════════════════════════════════════════╗"
+          echo "║                                                       ║"
+          echo "║          ✅  WORKSTATION READY & RUNNING  ✅          ║"
+          echo "║                                                       ║"
+          echo "╚═══════════════════════════════════════════════════════╝"
+          echo ""
+          
+          if [ -n "$CLOUDFLARE_HOST" ]; then
+            echo "🎯 STEP 1: Run this command on your LOCAL machine:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "cloudflared access tcp --hostname $CLOUDFLARE_HOST --url 127.0.0.1:5901"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "🖥️  STEP 2: Open VNC Viewer and connect to:"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Server: localhost:5901"
+            echo "Password: Your VNC_PASSWORD or P@ssw0rd123!"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           else
-            echo "⚠️  Cloudflare hostname not found"
-            echo "Check /tmp/cf.log for details"
+            echo "⚠️  Cloudflare tunnel hostname not detected"
+            echo "Check the Cloudflare Tunnel step logs for details"
           fi
-          echo "═══════════════════════════════════════"
+          
           echo ""
-          while true; do 
+          echo "🔄 Keeping workstation alive..."
+          echo ""
+          
+          while true; do
             sleep 3600
-            pgrep Xtigervnc || sudo -u sandsneha XDG_RUNTIME_DIR=/run/user/$(id -u sandsneha) vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+            
+            if ! pgrep -f "Xtigervnc.*:1" > /dev/null; then
+              echo "🔄 Restarting VNC server..."
+              sudo -u sandsneha bash -c 'export XDG_RUNTIME_DIR=/run/user/1001 && vncserver :1 -geometry 1920x1080 -depth 24 -localhost no'
+            fi
           done
