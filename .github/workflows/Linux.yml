@@ -134,32 +134,27 @@ jobs:
             TOKEN="${{ secrets.GITHUB_TOKEN }}"
           fi
           
-          cd /home/sandsneha
           sudo -u sandsneha git config --global user.name "sandsneha"
           sudo -u sandsneha git config --global user.email "sandsneha@github.com"
           
           BACKUP_REPO="https://x-access-token:${TOKEN}@github.com/sandsneha/backup-files.git"
           
           if sudo -u sandsneha git ls-remote "$BACKUP_REPO" &>/dev/null; then
-            sudo -u sandsneha git clone --depth=1 "$BACKUP_REPO" /tmp/backup-restore
+            sudo -u sandsneha git clone --depth=1 "$BACKUP_REPO" /home/sandsneha/backup-temp
             
-            if [ -f /tmp/backup-restore/README.md ]; then
-              grep -oP '^\s*-\s*\K\S+' /tmp/backup-restore/README.md | while read repo; do
+            if [ -f /home/sandsneha/backup-temp/README.md ]; then
+              grep -oP '^\s*-\s*\K\S+' /home/sandsneha/backup-temp/README.md | while read repo; do
                 REPO_NAME=$(basename "$repo")
                 sudo -u sandsneha git clone --depth=1 "https://x-access-token:${TOKEN}@github.com/${repo}.git" "/home/sandsneha/Desktop/sand/${REPO_NAME}" 2>/dev/null || true
               done
             fi
             
-            rm -rf /tmp/backup-restore
+            sudo rm -rf /home/sandsneha/backup-temp
           else
-            sudo -u sandsneha mkdir -p /tmp/new-backup
-            echo '# Backup Repository' | sudo -u sandsneha tee /tmp/new-backup/README.md > /dev/null
+            sudo -u sandsneha mkdir -p /home/sandsneha/new-backup-init
+            sudo -u sandsneha bash -c "echo '# Backup Repository' > /home/sandsneha/new-backup-init/README.md"
             
-            cd /tmp/new-backup
-            sudo -u sandsneha git init
-            sudo -u sandsneha git add .
-            sudo -u sandsneha git commit -m "Initial commit"
-            sudo -u sandsneha git branch -M main
+            sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git init && git add . && git commit -m 'Initial commit' && git branch -M main"
             
             curl -s -X POST \
               -H "Authorization: token ${TOKEN}" \
@@ -168,10 +163,9 @@ jobs:
               -d '{"name":"backup-files","private":true}' > /dev/null
             
             sleep 3
-            sudo -u sandsneha git remote add origin "$BACKUP_REPO"
-            sudo -u sandsneha git push -u origin main 2>/dev/null || true
+            sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git remote add origin '$BACKUP_REPO' && git push -u origin main" 2>/dev/null || true
             
-            rm -rf /tmp/new-backup
+            sudo rm -rf /home/sandsneha/new-backup-init
           fi
 
       - name: 👁️ Start Backup Watcher
@@ -211,17 +205,17 @@ jobs:
             git push -u origin main 2>/dev/null
             
             if [ $? -eq 0 ]; then
-              flock /tmp/backup.lock -c "
-                cd /tmp
-                rm -rf backup-temp
-                git clone --depth=1 https://x-access-token:GITHUB_TOKEN_PLACEHOLDER@github.com/$USERNAME/backup-files.git backup-temp
-                cd backup-temp
+              flock /home/sandsneha/backup.lock -c "
+                cd /home/sandsneha
+                rm -rf backup-list-temp
+                git clone --depth=1 https://x-access-token:GITHUB_TOKEN_PLACEHOLDER@github.com/$USERNAME/backup-files.git backup-list-temp
+                cd backup-list-temp
                 echo \"- $USERNAME/$FOLDER_NAME\" >> README.md
                 git add .
                 git commit -m \"Add $FOLDER_NAME\"
                 git push
-                cd /tmp
-                rm -rf backup-temp
+                cd /home/sandsneha
+                rm -rf backup-list-temp
               " 2>/dev/null
             fi
           }
@@ -237,7 +231,7 @@ jobs:
           sudo chmod +x /home/sandsneha/backup-watcher.sh
           sudo chown sandsneha:sandsneha /home/sandsneha/backup-watcher.sh
           
-          sudo -u sandsneha nohup /home/sandsneha/backup-watcher.sh > /dev/null 2>&1 &
+          sudo -u sandsneha nohup bash /home/sandsneha/backup-watcher.sh > /dev/null 2>&1 &
 
       - name: 💚 Keep Alive & Display Info
         run: |
