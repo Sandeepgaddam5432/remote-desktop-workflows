@@ -40,6 +40,12 @@ jobs:
           sudo mkdir -p /home/sandsneha/.vnc
           echo "${PASS}" | sudo -u sandsneha vncpasswd -f > /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
+          
+          # Create config directories for MATE desktop components
+          sudo mkdir -p /home/sandsneha/.config/caja
+          sudo mkdir -p /home/sandsneha/.config/mate
+          sudo mkdir -p /home/sandsneha/.local/share
+          
           sudo chown -R sandsneha:sandsneha /home/sandsneha
           echo "✅ User created successfully"
 
