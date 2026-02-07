@@ -1,13 +1,14 @@
-name: 🖥️ Ubuntu Cloud Workstation - Production Ready
+name: 🖥️ Cloud Workstation - XFCE4 Stable
 
 on:
   workflow_dispatch:
 
 env:
   VNC_DISPLAY: ':1'
+  VNC_PORT: '5901'
   VNC_GEOMETRY: '1920x1080'
   VNC_DEPTH: '24'
-  DESKTOP_DIR: '$HOME/Desktop/workspace'
+  WORKSPACE_DIR: '$HOME/Desktop/workspace'
   BACKUP_REPO: 'backup-files'
 
 jobs:
@@ -16,24 +17,33 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: 📦 Install MATE Desktop & VNC
+      - name: 📦 Install XFCE4 Desktop & VNC Stack
         run: |
-          echo "🔄 Installing desktop environment..."
+          echo "🔄 Installing stable XFCE4 environment..."
+          
           sudo apt-get update -qq
+          
+          # Install XFCE4 core (minimal, no bloat)
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            mate-desktop-environment-core \
-            mate-terminal \
+            xfce4 \
+            xfce4-terminal \
+            xfce4-goodies \
             tigervnc-standalone-server \
             tigervnc-common \
             dbus-x11 \
+            xfonts-base \
+            xfonts-100dpi \
+            xfonts-75dpi \
+            fonts-liberation \
             inotify-tools \
             git curl wget jq \
             firefox
-          echo "✅ Desktop installed successfully"
+          
+          echo "✅ XFCE4 desktop installed successfully"
 
       - name: 🔐 Configure VNC Server
         run: |
-          echo "🔄 Configuring VNC..."
+          echo "🔄 Configuring VNC with XFCE4..."
           
           # Set VNC password
           VNC_PASS="${{ secrets.VNC_PASSWORD }}"
@@ -45,33 +55,62 @@ jobs:
           echo "$VNC_PASS" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # Create MATE desktop config directories
-          mkdir -p ~/.config/{caja,mate}
+          # Create XFCE4 config directories
+          mkdir -p ~/.config/xfce4/{panel,xfconf,xfce4-session}
           mkdir -p ~/.local/share
           
-          # Create VNC startup script
+          # Create optimized VNC startup script for XFCE4
           cat > ~/.vnc/xstartup << 'EOF'
-          #!/bin/sh
+          #!/bin/bash
+          
+          # Unset problematic session managers
           unset SESSION_MANAGER
           unset DBUS_SESSION_BUS_ADDRESS
-          export XKL_XMODMAP_DISABLE=1
-          export XDG_CURRENT_DESKTOP="MATE"
-          export XDG_SESSION_TYPE=x11
           
-          [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
+          # Export essential X11 environment variables
+          export XDG_CURRENT_DESKTOP="XFCE"
+          export XDG_SESSION_TYPE="x11"
+          export XDG_SESSION_DESKTOP="xfce"
+          
+          # Disable accessibility bus (causes warnings in headless)
+          export NO_AT_BRIDGE=1
+          
+          # Start DBus session bus (critical for XFCE panels)
+          if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+            eval $(dbus-launch --sh-syntax --exit-with-session)
+          fi
+          
+          # Load X resources
           [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
           
-          xsetroot -solid grey
+          # Set solid background
+          xsetroot -solid "#2E3440"
+          
+          # Start VNC config panel (iconic mode)
           vncconfig -iconic &
-          exec mate-session
+          
+          # Start XFCE4 session
+          startxfce4
           EOF
           
           chmod +x ~/.vnc/xstartup
           
+          # Disable XFCE4 session save/restore (prevents state conflicts)
+          mkdir -p ~/.config/xfce4/xfconf/xfce-perchannel-xml
+          cat > ~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfce4-session" version="1.0">
+            <property name="general" type="empty">
+              <property name="SaveOnExit" type="bool" value="false"/>
+              <property name="SessionName" type="string" value="Default"/>
+            </property>
+          </channel>
+          EOF
+          
           # Create workspace directory
           mkdir -p ~/Desktop/workspace
           
-          echo "✅ VNC configured successfully"
+          echo "✅ VNC configured with XFCE4"
 
       - name: 🚀 Start VNC Server
         run: |
@@ -82,17 +121,21 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
           
-          # Start VNC server
+          # Start VNC server with XFCE4
           vncserver ${{ env.VNC_DISPLAY }} \
             -geometry ${{ env.VNC_GEOMETRY }} \
             -depth ${{ env.VNC_DEPTH }} \
-            -localhost no
+            -localhost no \
+            -alwaysshared
           
-          sleep 5
+          # Wait for VNC to fully initialize
+          sleep 8
           
           # Verify VNC is running
           if pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
-            echo "✅ VNC Server is running on ${{ env.VNC_DISPLAY }}"
+            echo "✅ VNC Server running on display ${{ env.VNC_DISPLAY }}"
+            echo "📊 VNC Process:"
+            pgrep -a Xtigervnc
           else
             echo "❌ VNC Server failed to start"
             echo "📋 VNC Logs:"
@@ -109,70 +152,99 @@ jobs:
           sudo dpkg -i cloudflared-linux-amd64.deb
           rm cloudflared-linux-amd64.deb
           
-          # Start tunnel
-          cloudflared tunnel --url tcp://localhost:5901 > /tmp/cloudflare.log 2>&1 &
+          # Start tunnel pointing to VNC port
+          cloudflared tunnel --url tcp://localhost:${{ env.VNC_PORT }} > /tmp/cloudflare.log 2>&1 &
           
-          # Wait for tunnel to establish
+          # Wait for tunnel establishment
+          echo "⏳ Waiting for Cloudflare tunnel..."
           sleep 10
           
-          # Extract hostname
-          for i in {1..40}; do
+          # Extract and verify hostname
+          TUNNEL_READY=false
+          for i in {1..30}; do
             if grep -q "https://" /tmp/cloudflare.log 2>/dev/null; then
-              HOSTNAME=$(grep -oP "https://\K[^[:space:]]+" /tmp/cloudflare.log | grep trycloudflare.com | head -1)
+              HOSTNAME=$(grep -oP "https://\K[^[:space:]]+" /tmp/cloudflare.log | grep -m1 "trycloudflare.com")
               if [ -n "$HOSTNAME" ]; then
                 echo "$HOSTNAME" > /tmp/cf_host.txt
-                echo "✅ Cloudflare tunnel created: $HOSTNAME"
+                echo "✅ Cloudflare tunnel established"
+                echo "🌐 Hostname: $HOSTNAME"
+                TUNNEL_READY=true
                 break
               fi
             fi
             sleep 2
           done
           
-          if [ ! -f /tmp/cf_host.txt ]; then
-            echo "⚠️  Cloudflare tunnel initialization in progress..."
-            echo "📋 Cloudflare Logs:"
-            head -20 /tmp/cloudflare.log 2>/dev/null || echo "Logs not yet available"
+          if [ "$TUNNEL_READY" = false ]; then
+            echo "⚠️  Tunnel may still be initializing..."
+            echo "📋 Recent logs:"
+            tail -15 /tmp/cloudflare.log 2>/dev/null || echo "No logs available yet"
           fi
 
-      - name: 🐍 Install Python Environment
+      - name: 🐍 Install Python Development Environment
         run: |
           echo "🔄 Installing Python..."
-          sudo apt-get install -y python3 python3-pip python3-venv
+          sudo apt-get install -y \
+            python3 \
+            python3-pip \
+            python3-venv \
+            python3-dev
+          
           python3 --version
           pip3 --version
-          echo "✅ Python installed"
+          echo "✅ Python environment ready"
 
-      - name: 📗 Install Node.js Environment
+      - name: 📗 Install Node.js Development Environment
         run: |
-          echo "🔄 Installing Node.js..."
+          echo "🔄 Installing Node.js LTS..."
           curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
           sudo apt-get install -y nodejs
+          
           node --version
           npm --version
-          echo "✅ Node.js installed"
+          echo "✅ Node.js environment ready"
 
-      - name: 💻 Install VS Code
+      - name: 💻 Install Visual Studio Code
         run: |
           echo "🔄 Installing VS Code..."
-          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
-          sudo install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+          
+          # Add Microsoft GPG key
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
+            gpg --dearmor > /tmp/packages.microsoft.gpg
+          sudo install -D -o root -g root -m 644 \
+            /tmp/packages.microsoft.gpg \
+            /etc/apt/keyrings/packages.microsoft.gpg
+          
+          # Add VS Code repository
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | \
             sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+          
+          # Install
           sudo apt-get update -qq
           sudo apt-get install -y code
+          
+          # Cleanup
           rm /tmp/packages.microsoft.gpg
+          
           code --version
           echo "✅ VS Code installed"
 
       - name: 🌌 Install Antigravity IDE
         run: |
           echo "🔄 Installing Antigravity IDE..."
+          
+          # Add Antigravity GPG key
           curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
             sudo gpg --dearmor -o /etc/apt/keyrings/antigravity.gpg
+          
+          # Add Antigravity repository
           echo "deb [signed-by=/etc/apt/keyrings/antigravity.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
             sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+          
+          # Install
           sudo apt-get update -qq
           sudo apt-get install -y antigravity
+          
           antigravity --version
           echo "✅ Antigravity IDE installed"
 
@@ -182,233 +254,307 @@ jobs:
           git config --global user.name "${GITHUB_ACTOR}"
           git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
           git config --global init.defaultBranch main
-          echo "✅ Git configured for user: ${GITHUB_ACTOR}"
+          git config --global core.autocrlf input
+          
+          echo "✅ Git configured for: ${GITHUB_ACTOR}"
 
       - name: 🔄 Restore Projects from Backup
         run: |
-          echo "🔄 Setting up backup restoration..."
+          echo "🔄 Checking for project backups..."
           
-          # Determine which token to use
+          # Determine authentication token
           TOKEN="${{ secrets.GH_TOKEN }}"
-          if [ -z "$TOKEN" ]; then
-            TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          fi
+          [ -z "$TOKEN" ] && TOKEN="${{ secrets.GITHUB_TOKEN }}"
           
           BACKUP_REPO_URL="https://x-access-token:${TOKEN}@github.com/${GITHUB_ACTOR}/${{ env.BACKUP_REPO }}.git"
           
           # Check if backup repository exists
           if git ls-remote "$BACKUP_REPO_URL" &>/dev/null; then
-            echo "📥 Backup repository found, restoring projects..."
+            echo "📥 Backup repository found - restoring projects..."
             
-            git clone --depth=1 "$BACKUP_REPO_URL" /tmp/backup-temp
+            # Clone backup index
+            git clone --depth=1 "$BACKUP_REPO_URL" /tmp/backup-index
             
-            if [ -f /tmp/backup-temp/README.md ]; then
-              # Extract repository names from README
-              grep -oP '^\s*-\s*\K\S+' /tmp/backup-temp/README.md | while read REPO_PATH; do
+            # Restore each project listed in README
+            if [ -f /tmp/backup-index/README.md ]; then
+              RESTORE_COUNT=0
+              
+              while IFS= read -r REPO_PATH; do
+                [ -z "$REPO_PATH" ] && continue
+                
                 REPO_NAME=$(basename "$REPO_PATH")
                 echo "  📦 Restoring: $REPO_NAME"
                 
-                git clone --depth=1 \
+                if git clone --depth=1 \
                   "https://x-access-token:${TOKEN}@github.com/${REPO_PATH}.git" \
-                  "$HOME/Desktop/workspace/${REPO_NAME}" 2>/dev/null || \
-                  echo "    ⚠️  Failed to restore $REPO_NAME"
-              done
+                  "$HOME/Desktop/workspace/${REPO_NAME}" 2>/dev/null; then
+                  ((RESTORE_COUNT++))
+                  echo "    ✅ Restored successfully"
+                else
+                  echo "    ⚠️  Failed to restore"
+                fi
+              done < <(grep -oP '^\s*-\s*\K\S+' /tmp/backup-index/README.md)
+              
+              echo "✅ Restored $RESTORE_COUNT project(s)"
             fi
             
-            rm -rf /tmp/backup-temp
-            echo "✅ Projects restored successfully"
+            rm -rf /tmp/backup-index
             
           else
-            echo "📝 No existing backup found, creating new backup repository..."
+            echo "📝 No backup repository found - creating new one..."
             
-            # Create initial backup repository
+            # Initialize new backup repository
             mkdir -p /tmp/new-backup
-            echo "# Backup Repository" > /tmp/new-backup/README.md
-            echo "" >> /tmp/new-backup/README.md
-            echo "This repository tracks all backed-up projects." >> /tmp/new-backup/README.md
-            echo "" >> /tmp/new-backup/README.md
-            echo "## Projects" >> /tmp/new-backup/README.md
-            
             cd /tmp/new-backup
+            
+            cat > README.md << 'EOFREADME'
+          # 🗄️ Project Backup Index
+          
+          This repository maintains a list of all backed-up projects.
+          
+          ## Backed Up Projects
+          
+          EOFREADME
+            
             git init
-            git add .
-            git commit -m "Initial commit"
+            git add README.md
+            git commit -m "Initialize backup repository"
             git branch -M main
             
             # Create repository via GitHub API
-            curl -s -X POST \
+            HTTP_STATUS=$(curl -s -o /tmp/api_response.json -w "%{http_code}" \
+              -X POST \
               -H "Authorization: token ${TOKEN}" \
               -H "Content-Type: application/json" \
               https://api.github.com/user/repos \
-              -d "{\"name\":\"${{ env.BACKUP_REPO }}\",\"private\":true,\"description\":\"Automated project backups\"}" \
-              > /dev/null
+              -d "{\"name\":\"${{ env.BACKUP_REPO }}\",\"private\":true,\"description\":\"Automated project backup index\"}")
             
-            sleep 3
-            
-            # Push to GitHub
-            git remote add origin "$BACKUP_REPO_URL"
-            git push -u origin main 2>/dev/null || \
-              echo "⚠️  Initial push failed (repository may need time to initialize)"
+            if [ "$HTTP_STATUS" -eq 201 ] || [ "$HTTP_STATUS" -eq 422 ]; then
+              echo "✅ Backup repository created/verified"
+              sleep 3
+              
+              # Push initial commit
+              git remote add origin "$BACKUP_REPO_URL"
+              if git push -u origin main 2>/dev/null; then
+                echo "✅ Initial backup index pushed"
+              else
+                echo "⚠️  Push failed - repository may need time to initialize"
+              fi
+            else
+              echo "⚠️  API response: $(cat /tmp/api_response.json 2>/dev/null)"
+            fi
             
             cd ~
-            rm -rf /tmp/new-backup
-            echo "✅ Backup repository created"
+            rm -rf /tmp/new-backup /tmp/api_response.json
           fi
 
-      - name: 👁️ Start Backup Watcher Service
+      - name: 👁️ Deploy Backup Watcher Service
         run: |
-          echo "🔄 Setting up backup watcher..."
+          echo "🔄 Deploying backup watcher service..."
           
-          # Determine which token to use
+          # Determine authentication token
           TOKEN="${{ secrets.GH_TOKEN }}"
-          if [ -z "$TOKEN" ]; then
-            TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          fi
+          [ -z "$TOKEN" ] && TOKEN="${{ secrets.GITHUB_TOKEN }}"
           
-          # Create backup watcher script
-          cat > ~/backup-watcher.sh << 'EOF'
+          # Create intelligent backup watcher
+          cat > ~/backup-watcher.sh << 'EOFWATCHER'
           #!/bin/bash
           
+          # Configuration
           WATCH_DIR="$HOME/Desktop/workspace"
           GITHUB_USER="${GITHUB_ACTOR}"
           BACKUP_REPO="backup-files"
           TOKEN="TOKEN_PLACEHOLDER"
+          LOCK_FILE="$HOME/.backup-watcher.lock"
+          LOG_FILE="$HOME/backup-watcher.log"
           
-          process_new_folder() {
-            local FOLDER_PATH="$1"
-            local FOLDER_NAME=$(basename "$FOLDER_PATH")
+          log() {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+          }
+          
+          process_new_project() {
+            local PROJECT_PATH="$1"
+            local PROJECT_NAME=$(basename "$PROJECT_PATH")
             
-            # Wait for folder to settle
+            log "📁 Detected new project: $PROJECT_NAME"
+            
+            # Wait for project to stabilize
             sleep 15
             
-            # Skip if folder is empty
-            if [ -z "$(ls -A "$FOLDER_PATH")" ]; then
-              echo "⏭️  Skipping empty folder: $FOLDER_NAME"
+            # Skip empty directories
+            if [ -z "$(ls -A "$PROJECT_PATH" 2>/dev/null)" ]; then
+              log "⏭️  Skipping empty project: $PROJECT_NAME"
               return
             fi
             
-            echo "📤 Processing new project: $FOLDER_NAME"
+            # Skip if already a git repository
+            if [ -d "$PROJECT_PATH/.git" ]; then
+              log "⏭️  Already a git repository: $PROJECT_NAME"
+              return
+            fi
+            
+            log "📤 Backing up project: $PROJECT_NAME"
             
             # Create GitHub repository
-            curl -s -X POST \
+            HTTP_STATUS=$(curl -s -o /tmp/repo_create_$$.json -w "%{http_code}" \
+              -X POST \
               -H "Authorization: token $TOKEN" \
               -H "Content-Type: application/json" \
               https://api.github.com/user/repos \
-              -d "{\"name\":\"$FOLDER_NAME\",\"private\":true}" > /dev/null
+              -d "{\"name\":\"$PROJECT_NAME\",\"private\":true,\"auto_init\":false}")
             
-            sleep 2
+            if [ "$HTTP_STATUS" -ne 201 ] && [ "$HTTP_STATUS" -ne 422 ]; then
+              log "❌ Failed to create repository (HTTP $HTTP_STATUS)"
+              rm -f /tmp/repo_create_$$.json
+              return
+            fi
+            
+            sleep 3
+            rm -f /tmp/repo_create_$$.json
             
             # Initialize git and push
-            cd "$FOLDER_PATH"
+            cd "$PROJECT_PATH"
+            
             git init
             git add .
-            git commit -m "Initial commit" 2>/dev/null
+            git commit -m "Initial commit from cloud workstation" 2>/dev/null
             git branch -M main
-            git remote add origin "https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$FOLDER_NAME.git"
+            git remote add origin "https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$PROJECT_NAME.git"
             
             if git push -u origin main 2>/dev/null; then
-              echo "  ✅ Pushed to GitHub: $FOLDER_NAME"
+              log "✅ Pushed to GitHub: $PROJECT_NAME"
               
-              # Update backup repository index
-              flock ~/backup.lock -c "
+              # Update backup index (with file locking)
+              flock "$LOCK_FILE" bash -c "
                 cd ~
-                rm -rf /tmp/backup-list-update
-                git clone --depth=1 https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$BACKUP_REPO.git /tmp/backup-list-update
-                cd /tmp/backup-list-update
-                echo '- $GITHUB_USER/$FOLDER_NAME' >> README.md
-                git add README.md
-                git commit -m 'Add $FOLDER_NAME to backup index'
-                git push
-                cd ~
-                rm -rf /tmp/backup-list-update
-              " 2>/dev/null
+                rm -rf /tmp/backup-index-update-$$
+                
+                if git clone --depth=1 https://x-access-token:$TOKEN@github.com/$GITHUB_USER/$BACKUP_REPO.git /tmp/backup-index-update-$$ 2>/dev/null; then
+                  cd /tmp/backup-index-update-$$
+                  
+                  # Add to index if not already present
+                  if ! grep -q \"$GITHUB_USER/$PROJECT_NAME\" README.md 2>/dev/null; then
+                    echo \"- $GITHUB_USER/$PROJECT_NAME\" >> README.md
+                    git add README.md
+                    git commit -m \"Add $PROJECT_NAME to backup index\"
+                    git push 2>/dev/null
+                    echo \"✅ Updated backup index\"
+                  fi
+                  
+                  cd ~
+                  rm -rf /tmp/backup-index-update-$$
+                fi
+              " 2>&1 | while read line; do log "$line"; done
               
-              echo "  ✅ Updated backup index"
             else
-              echo "  ❌ Failed to push: $FOLDER_NAME"
+              log "❌ Failed to push: $PROJECT_NAME"
             fi
           }
           
-          export -f process_new_folder
+          export -f process_new_project
+          export -f log
           
-          # Watch for new directories
-          echo "👁️  Watching: $WATCH_DIR"
-          inotifywait -m -e create --format '%w%f' "$WATCH_DIR" | while read NEW_PATH; do
+          # Start watching
+          log "👁️  Backup watcher started - monitoring: $WATCH_DIR"
+          
+          inotifywait -m -e create --format '%w%f' "$WATCH_DIR" 2>/dev/null | while read NEW_PATH; do
             if [ -d "$NEW_PATH" ]; then
-              process_new_folder "$NEW_PATH" &
+              process_new_project "$NEW_PATH" &
             fi
           done
-          EOF
+          EOFWATCHER
           
-          # Replace token placeholder
+          # Inject token
           sed -i "s|TOKEN_PLACEHOLDER|${TOKEN}|g" ~/backup-watcher.sh
           chmod +x ~/backup-watcher.sh
           
-          # Start watcher in background
-          nohup bash ~/backup-watcher.sh > ~/backup-watcher.log 2>&1 &
+          # Start watcher service
+          nohup bash ~/backup-watcher.sh > /dev/null 2>&1 &
+          WATCHER_PID=$!
           
-          echo "✅ Backup watcher started (PID: $!)"
+          echo "✅ Backup watcher service deployed (PID: $WATCHER_PID)"
 
-      - name: 💚 Keep Alive & Display Connection Info
+      - name: 💚 Keep Alive & Connection Info
         run: |
           CLOUDFLARE_HOST=$(cat /tmp/cf_host.txt 2>/dev/null || echo "")
           
           echo ""
-          echo "╔═══════════════════════════════════════════════════════╗"
-          echo "║                                                       ║"
-          echo "║       ✅  CLOUD WORKSTATION READY & RUNNING  ✅       ║"
-          echo "║                                                       ║"
-          echo "╚═══════════════════════════════════════════════════════╝"
+          echo "╔════════════════════════════════════════════════════════╗"
+          echo "║                                                        ║"
+          echo "║     ✅  XFCE4 CLOUD WORKSTATION READY & STABLE  ✅     ║"
+          echo "║                                                        ║"
+          echo "╚════════════════════════════════════════════════════════╝"
           echo ""
           
           if [ -n "$CLOUDFLARE_HOST" ]; then
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "🎯 STEP 1: Run this command on your LOCAL machine:"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🎯 STEP 1: Run on your LOCAL machine"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "cloudflared access tcp --hostname $CLOUDFLARE_HOST --url 127.0.0.1:5901"
+            echo "cloudflared access tcp --hostname $CLOUDFLARE_HOST --url 127.0.0.1:${{ env.VNC_PORT }}"
             echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "🖥️  STEP 2: Connect using VNC Viewer:"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🖥️  STEP 2: Connect with VNC Viewer"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
-            echo "  Address:  localhost:5901"
-            echo "  Password: $([ -n "${{ secrets.VNC_PASSWORD }}" ] && echo "Your VNC_PASSWORD secret" || echo "P@ssw0rd123!")"
+            echo "  Server:   localhost:${{ env.VNC_PORT }}"
+            if [ -n "${{ secrets.VNC_PASSWORD }}" ]; then
+              echo "  Password: [Your VNC_PASSWORD secret]"
+            else
+              echo "  Password: P@ssw0rd123!"
+            fi
             echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           else
-            echo "⚠️  Cloudflare tunnel hostname not yet available"
-            echo "    Check logs above or wait a few moments"
+            echo "⚠️  Cloudflare tunnel still initializing..."
+            echo "    Check 'Setup Cloudflare Tunnel' step above"
           fi
           
           echo ""
-          echo "📊 Workstation Details:"
-          echo "  • User: ${USER}"
-          echo "  • Workspace: ~/Desktop/workspace"
-          echo "  • Session Duration: 6 hours max"
-          echo "  • Auto-restart: Enabled"
-          echo ""
-          echo "🔄 Monitoring VNC connection..."
+          echo "📊 Environment Details:"
+          echo "  • Desktop:     XFCE4 (stable, headless-optimized)"
+          echo "  • User:        ${USER}"
+          echo "  • Workspace:   ~/Desktop/workspace"
+          echo "  • Duration:    6 hours (auto-restart enabled)"
+          echo "  • Backup:      Auto-sync to GitHub"
           echo ""
           
-          # Keep-alive loop with VNC health checks
+          # Enhanced health monitoring loop
+          RESTART_COUNT=0
+          MAX_RESTARTS=5
+          
           while true; do
-            sleep 3600
+            sleep 1800  # Check every 30 minutes
             
-            # Check if VNC is still running
+            # VNC health check
             if ! pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
-              echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️  VNC connection lost, restarting..."
-              
-              export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-              vncserver ${{ env.VNC_DISPLAY }} \
-                -geometry ${{ env.VNC_GEOMETRY }} \
-                -depth ${{ env.VNC_DEPTH }} \
-                -localhost no
-              
-              if pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ VNC server restarted successfully"
+              if [ $RESTART_COUNT -lt $MAX_RESTARTS ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️  VNC disconnected - restarting..."
+                
+                export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+                
+                vncserver ${{ env.VNC_DISPLAY }} \
+                  -geometry ${{ env.VNC_GEOMETRY }} \
+                  -depth ${{ env.VNC_DEPTH }} \
+                  -localhost no \
+                  -alwaysshared
+                
+                sleep 5
+                
+                if pgrep -f "Xtigervnc.*${{ env.VNC_DISPLAY }}" > /dev/null; then
+                  ((RESTART_COUNT++))
+                  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ VNC restarted (attempt $RESTART_COUNT/$MAX_RESTARTS)"
+                else
+                  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ VNC restart failed"
+                fi
               else
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ VNC restart failed"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Max restart attempts reached"
               fi
+            fi
+            
+            # Backup watcher health check
+            if ! pgrep -f "backup-watcher.sh" > /dev/null; then
+              echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Restarting backup watcher..."
+              nohup bash ~/backup-watcher.sh > /dev/null 2>&1 &
             fi
           done
