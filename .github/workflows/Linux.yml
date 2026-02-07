@@ -1,4 +1,4 @@
-name: 🖥️ Cloud Workstation - XFCE4 Stable
+name: 🖥️ Cloud Workstation - XFCE4 Stable (Working)
 
 on:
   workflow_dispatch:
