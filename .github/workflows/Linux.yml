@@ -134,24 +134,26 @@ jobs:
             TOKEN="${{ secrets.GITHUB_TOKEN }}"
           fi
           
-          sudo -u sandsneha git config --global user.name "sandsneha"
-          sudo -u sandsneha git config --global user.email "sandsneha@github.com"
+          sudo -u sandsneha bash -c "git config --global user.name 'sandsneha'"
+          sudo -u sandsneha bash -c "git config --global user.email 'sandsneha@github.com'"
+          sudo -u sandsneha bash -c "git config --global init.defaultBranch main"
           
           BACKUP_REPO="https://x-access-token:${TOKEN}@github.com/sandsneha/backup-files.git"
           
-          if sudo -u sandsneha git ls-remote "$BACKUP_REPO" &>/dev/null; then
-            sudo -u sandsneha git clone --depth=1 "$BACKUP_REPO" /home/sandsneha/backup-temp
+          if sudo -u sandsneha bash -c "git ls-remote '$BACKUP_REPO' &>/dev/null"; then
+            sudo -u sandsneha bash -c "cd /home/sandsneha && git clone --depth=1 '$BACKUP_REPO' backup-temp"
             
             if [ -f /home/sandsneha/backup-temp/README.md ]; then
               grep -oP '^\s*-\s*\K\S+' /home/sandsneha/backup-temp/README.md | while read repo; do
                 REPO_NAME=$(basename "$repo")
-                sudo -u sandsneha git clone --depth=1 "https://x-access-token:${TOKEN}@github.com/${repo}.git" "/home/sandsneha/Desktop/sand/${REPO_NAME}" 2>/dev/null || true
+                sudo -u sandsneha bash -c "git clone --depth=1 'https://x-access-token:${TOKEN}@github.com/${repo}.git' '/home/sandsneha/Desktop/sand/${REPO_NAME}'" 2>/dev/null || true
               done
             fi
             
             sudo rm -rf /home/sandsneha/backup-temp
+            echo "✅ Restored existing projects"
           else
-            sudo -u sandsneha mkdir -p /home/sandsneha/new-backup-init
+            sudo -u sandsneha bash -c "mkdir -p /home/sandsneha/new-backup-init"
             sudo -u sandsneha bash -c "echo '# Backup Repository' > /home/sandsneha/new-backup-init/README.md"
             
             sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git init && git add . && git commit -m 'Initial commit' && git branch -M main"
@@ -166,6 +168,7 @@ jobs:
             sudo -u sandsneha bash -c "cd /home/sandsneha/new-backup-init && git remote add origin '$BACKUP_REPO' && git push -u origin main" 2>/dev/null || true
             
             sudo rm -rf /home/sandsneha/new-backup-init
+            echo "✅ Created new backup repository"
           fi
 
       - name: 👁️ Start Backup Watcher
