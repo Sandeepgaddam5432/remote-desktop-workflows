@@ -51,8 +51,27 @@ jobs:
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/passwd
           sudo chmod 600 /home/sandsneha/.vnc/passwd
           echo '#!/bin/bash' | sudo tee /home/sandsneha/.vnc/xstartup
+          echo '' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '# Fix D-Bus and XFCE session issues' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'export XDG_CONFIG_DIRS=/etc/xdg' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'export XDG_DATA_DIRS=/usr/share:/usr/local/share' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '# Create runtime directory if needed' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'if [ ! -d "$XDG_RUNTIME_DIR" ]; then' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '    mkdir -p "$XDG_RUNTIME_DIR"' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '    chmod 700 "$XDG_RUNTIME_DIR"' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'fi' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '# Start D-Bus session' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '    eval $(dbus-launch --sh-syntax --exit-with-session)' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo 'fi' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '# Unset problematic session variables' | sudo tee -a /home/sandsneha/.vnc/xstartup
           echo 'unset SESSION_MANAGER' | sudo tee -a /home/sandsneha/.vnc/xstartup
-          echo 'unset DBUS_SESSION_BUS_ADDRESS' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '' | sudo tee -a /home/sandsneha/.vnc/xstartup
+          echo '# Start XFCE Desktop' | sudo tee -a /home/sandsneha/.vnc/xstartup
           echo 'exec startxfce4' | sudo tee -a /home/sandsneha/.vnc/xstartup
           sudo chown sandsneha:sandsneha /home/sandsneha/.vnc/xstartup
           sudo chmod +x /home/sandsneha/.vnc/xstartup
@@ -68,6 +87,11 @@ jobs:
           # Create .Xauthority file first
           sudo -u sandsneha touch /home/sandsneha/.Xauthority
           sudo chown sandsneha:sandsneha /home/sandsneha/.Xauthority
+          
+          # Create runtime directory for D-Bus
+          sudo mkdir -p /run/user/$(id -u sandsneha)
+          sudo chown sandsneha:sandsneha /run/user/$(id -u sandsneha)
+          sudo chmod 700 /run/user/$(id -u sandsneha)
           
           # Start VNC server
           sudo -u sandsneha vncserver :1 -geometry 1920x1080 -depth 24 -localhost no -SecurityTypes VncAuth
