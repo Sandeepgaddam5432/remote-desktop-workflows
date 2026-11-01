@@ -1,299 +1,259 @@
-name: 🖥️ Ubuntu Cloud Workstation (Zero-Error Edition)
+name: 🍎 macOS Cloud Workstation
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner image (arm64 = Apple Silicon, intel = x86_64)"
+        type: choice
+        default: macos-15
+        options:
+          - macos-15
+          - macos-14
+          - macos-26
+          - macos-15-intel
+          - macos-26-intel
   push:
     branches: [main]
 
 env:
-  WORKSPACE_USER: sandsneha
-  VNC_DISPLAY: :1
-  VNC_PORT: 5901
+  WORKSPACE_USER: sandsneha          # macOS account that gets created
+  GH_OWNER: sandsneha                # GitHub account that owns backup repos
+  USER_HOME: /Users/sandsneha
+  WORKSPACE_DIR: /Users/sandsneha/Desktop/sand
+  VNC_PORT: 5900                     # macOS built-in Screen Sharing port
   BACKUP_REGISTRY_REPO: backup-files
-  WORKSPACE_DIR: /home/sandsneha/Desktop/sand
 
 jobs:
   cloud-workstation:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 360
-    
+
     steps:
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # 🔧 PHASE 1: System Setup (Permission-Safe)
+      # 🔧 PHASE 1: System Setup
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
-      - name: 📦 Install Desktop Environment & VNC Server
+
+      - name: 📦 Install Tools (Homebrew)
         run: |
           set -e
-          echo "🔧 Installing XFCE4 Desktop & TigerVNC..."
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            xfce4 xfce4-goodies tigervnc-standalone-server tigervnc-common \
-            dbus-x11 inotify-tools git curl wget jq
-          echo "✅ Desktop environment installed"
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+          echo "🔧 Installing cloudflared & jq..."
+          brew install cloudflared jq
+          cloudflared --version
+          echo "✅ Tools installed"
 
-      - name: 👤 Create User & Fix Permissions (CRITICAL)
+      - name: 👤 Create User & Fix Permissions
         env:
           USER_PASSWORD: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
+          HAS_SECRET: ${{ secrets.VNC_PASSWORD != '' }}
         run: |
           set -e
+          if [ "$HAS_SECRET" != "true" ]; then
+            echo "::warning::VNC_PASSWORD secret not set - using the PUBLIC default password. Set the secret!"
+          fi
+
           echo "👤 Creating user: $WORKSPACE_USER"
-          
-          # Step 1: Create user with home directory
-          sudo useradd -m -s /bin/bash -G sudo $WORKSPACE_USER
-          
-          # Step 2: IMMEDIATE ownership fix (prevents permission issues)
-          sudo chown -R $WORKSPACE_USER:$WORKSPACE_USER /home/$WORKSPACE_USER
-          echo "✅ User created with proper ownership"
-          
-          # Step 3: Set user password
-          echo "$WORKSPACE_USER:$USER_PASSWORD" | sudo chpasswd
-          
-          # Step 4: Configure sudo without password
-          echo "$WORKSPACE_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$WORKSPACE_USER
-          sudo chmod 0440 /etc/sudoers.d/$WORKSPACE_USER
-          
+          if id "$WORKSPACE_USER" &>/dev/null; then
+            echo "ℹ️  User already exists"
+          else
+            sudo sysadminctl -addUser "$WORKSPACE_USER" \
+              -fullName "Cloud Workstation" \
+              -password "$USER_PASSWORD" \
+              -admin
+          fi
+
+          # Make sure home exists (sysadminctl can skip it) and fix ownership
+          sudo createhomedir -c -u "$WORKSPACE_USER" >/dev/null 2>&1 || true
+          sudo mkdir -p "$USER_HOME" "$WORKSPACE_DIR"
+          sudo chown -R "$WORKSPACE_USER":staff "$USER_HOME"
+
+          # Passwordless sudo
+          echo "$WORKSPACE_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/$WORKSPACE_USER" >/dev/null
+          sudo chown root:wheel "/etc/sudoers.d/$WORKSPACE_USER"
+          sudo chmod 0440 "/etc/sudoers.d/$WORKSPACE_USER"
+          sudo visudo -cf "/etc/sudoers.d/$WORKSPACE_USER"
+
+          dscl . -read "/Users/$WORKSPACE_USER" UniqueID
           echo "✅ User permissions configured"
 
-      - name: 🔐 Configure VNC (Permission-Safe Method)
+      - name: 🔐 Enable Screen Sharing (VNC)
         env:
           USER_PASSWORD: ${{ secrets.VNC_PASSWORD || 'P@ssw0rd123!' }}
         run: |
           set -e
-          echo "🔐 Configuring VNC for user: $WORKSPACE_USER"
-          
-          # Step 1: Create .vnc directory as USER (not root!)
-          sudo -u $WORKSPACE_USER mkdir -p /home/$WORKSPACE_USER/.vnc
-          
-          # Step 2: Create VNC password file with proper ownership
-          # CRITICAL: Use bash -c to handle file redirection as the user
-          echo "$USER_PASSWORD" | sudo -u $WORKSPACE_USER bash -c 'vncpasswd -f > /home/$WORKSPACE_USER/.vnc/passwd'
-          
-          # Step 3: Verify file was created
-          if [ ! -f /home/$WORKSPACE_USER/.vnc/passwd ]; then
-            echo "❌ VNC password file creation failed"
-            exit 1
-          fi
-          
-          # Step 4: Set strict permissions (VNC requires 600)
-          sudo -u $WORKSPACE_USER chmod 600 /home/$WORKSPACE_USER/.vnc/passwd
-          
-          # Step 5: Verify ownership
-          ls -la /home/$WORKSPACE_USER/.vnc/passwd
-          
-          # Step 6: Create xstartup script as USER
-          sudo -u $WORKSPACE_USER bash -c 'cat > /home/$WORKSPACE_USER/.vnc/xstartup << "EOF"
-#!/bin/bash
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-exec startxfce4
-EOF'
-          
-          # Step 7: Make xstartup executable
-          sudo -u $WORKSPACE_USER chmod +x /home/$WORKSPACE_USER/.vnc/xstartup
-          
-          # Step 8: Create Desktop directory and workspace
-          sudo -u $WORKSPACE_USER mkdir -p $WORKSPACE_DIR
-          
-          # Step 9: Final ownership verification
-          sudo chown -R $WORKSPACE_USER:$WORKSPACE_USER /home/$WORKSPACE_USER
-          
-          echo "✅ VNC configured successfully with correct permissions"
+          echo "🔐 Enabling macOS Screen Sharing / Remote Management..."
 
-      - name: 🚀 Start VNC Server
-        run: |
-          set -e
-          echo "🚀 Starting TigerVNC Server..."
-          
-          # Start VNC as the user (not root!)
-          sudo -u $WORKSPACE_USER vncserver $VNC_DISPLAY \
-            -geometry 1920x1080 \
-            -depth 24 \
-            -localhost no \
-            -SecurityTypes VncAuth
-          
-          # Wait for VNC to initialize
-          sleep 3
-          
-          # Verify VNC is running
-          if sudo -u $WORKSPACE_USER vncserver -list | grep -q "$VNC_DISPLAY"; then
-            echo "✅ VNC Server is running on port $VNC_PORT"
-            sudo -u $WORKSPACE_USER vncserver -list
-          else
-            echo "❌ VNC Server failed to start"
-            sudo -u $WORKSPACE_USER cat /home/$WORKSPACE_USER/.vnc/*.log || true
-            exit 1
-          fi
+          # Legacy VNC passwords are max 8 characters
+          VNC_PW="${USER_PASSWORD:0:8}"
+          KICKSTART="/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart"
 
-      #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # 🌐 PHASE 2: Cloudflare Tunnel (Robust Detection)
-      #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
-      - name: ☁️ Install & Start Cloudflare Tunnel
-        run: |
-          set -e
-          echo "☁️ Installing cloudflared..."
-          
-          # Download and install
-          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-          sudo dpkg -i cloudflared-linux-amd64.deb
-          rm cloudflared-linux-amd64.deb
-          
-          echo "🌐 Starting Cloudflare tunnel..."
-          
-          # Start tunnel in background with logging
-          nohup cloudflared tunnel --url tcp://localhost:$VNC_PORT > /tmp/cloudflare.log 2>&1 &
-          TUNNEL_PID=$!
-          
-          # Wait for tunnel URL with timeout
-          echo "⏳ Waiting for tunnel to initialize..."
-          TUNNEL_HOST=""
-          
-          for i in {1..60}; do
-            if [ -f /tmp/cloudflare.log ] && grep -q "https://.*trycloudflare.com" /tmp/cloudflare.log; then
-              TUNNEL_HOST=$(grep -oP 'https://\K[^/]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
-              break
-            fi
+          sudo "$KICKSTART" -activate -configure -access -on \
+            -allowAccessFor -allUsers -privs -all \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "$VNC_PW" \
+            -clientopts -setmenuextra -menuextra yes \
+            -restart -agent || echo "⚠️  kickstart returned non-zero (often just a warning)"
+
+          # Belt and braces: make sure the screensharing daemon is loaded
+          sudo launchctl enable system/com.apple.screensharing 2>/dev/null || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+
+          echo "⏳ Waiting for port $VNC_PORT..."
+          OK=0
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 "$VNC_PORT" 2>/dev/null; then OK=1; break; fi
             sleep 1
           done
-          
-          # Verify tunnel established
+
+          if [ "$OK" -ne 1 ]; then
+            echo "❌ Screen Sharing is not listening on $VNC_PORT"
+            sudo launchctl print system/com.apple.screensharing 2>&1 | head -40 || true
+            exit 1
+          fi
+          echo "✅ Screen Sharing listening on port $VNC_PORT"
+
+      #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      # 🌐 PHASE 2: Cloudflare Tunnel
+      #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+      - name: ☁️ Start Cloudflare Tunnel
+        run: |
+          set -e
+          # Keep the Mac (and display) awake for the whole session
+          nohup caffeinate -dimsu >/dev/null 2>&1 &
+          disown || true
+
+          echo "🌐 Starting Cloudflare tunnel..."
+          nohup cloudflared tunnel --no-autoupdate --url "tcp://localhost:$VNC_PORT" > /tmp/cloudflare.log 2>&1 &
+          disown || true
+
+          echo "⏳ Waiting for tunnel to initialize..."
+          TUNNEL_HOST=""
+          for i in $(seq 1 60); do
+            TUNNEL_HOST=$(sed -nE 's#.*https://([a-zA-Z0-9-]+\.trycloudflare\.com).*#\1#p' /tmp/cloudflare.log | head -1)
+            if [ -n "$TUNNEL_HOST" ]; then break; fi
+            sleep 1
+          done
+
           if [ -z "$TUNNEL_HOST" ]; then
             echo "❌ Failed to establish tunnel after 60 seconds"
-            echo "📋 Cloudflare logs:"
             cat /tmp/cloudflare.log
             exit 1
           fi
-          
-          # Success! Print connection details
+
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ TUNNEL ESTABLISHED SUCCESSFULLY!"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          echo "🎯 STEP 1: Run this command on your LOCAL machine:"
+          echo "🎯 STEP 1: Run this on your LOCAL machine:"
           echo ""
-          echo "   cloudflared access tcp --hostname $TUNNEL_HOST --url 127.0.0.1:$VNC_PORT"
+          echo "   cloudflared access tcp --hostname $TUNNEL_HOST --url 127.0.0.1:5901"
           echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📌 STEP 2: Then connect your VNC Viewer to:"
+          echo "📌 STEP 2: Connect your VNC viewer to:  localhost:5901"
+          echo "   (on a Mac:  open vnc://localhost:5901 )"
           echo ""
-          echo "   Address: localhost:$VNC_PORT"
+          echo "🔑 Login:"
+          echo "   Username: $WORKSPACE_USER"
           echo "   Password: <your VNC_PASSWORD secret>"
-          echo ""
+          echo "   Non-Apple viewers asking for a VNC-only password: first 8 chars of that secret"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo ""
+
+          # Also put it in the job summary (easy to copy on phone)
+          {
+            echo "### 🍎 macOS Workstation"
+            echo '```'
+            echo "cloudflared access tcp --hostname $TUNNEL_HOST --url 127.0.0.1:5901"
+            echo '```'
+            echo "Viewer address: \`localhost:5901\` - user: \`$WORKSPACE_USER\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # 🧠 PHASE 3: Smart Backup - Restore Phase
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
+
       - name: 🔄 Restore Previous Projects
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -e
+          export GIT_TERMINAL_PROMPT=0
+          as_user() { sudo -H -u "$WORKSPACE_USER" "$@"; }
+
           echo "🔄 Starting project restoration..."
-          
-          # Configure git as USER
-          sudo -u $WORKSPACE_USER git config --global user.name "$WORKSPACE_USER"
-          sudo -u $WORKSPACE_USER git config --global user.email "$WORKSPACE_USER@github.com"
-          
-          # Registry URL
-          REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/${WORKSPACE_USER}/${BACKUP_REGISTRY_REPO}.git"
-          
-          # Check if registry exists
-          if sudo -u $WORKSPACE_USER git ls-remote "$REGISTRY_URL" &>/dev/null; then
+          as_user git config --global user.name "$WORKSPACE_USER"
+          as_user git config --global user.email "${GH_OWNER}@users.noreply.github.com"
+
+          REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/${GH_OWNER}/${BACKUP_REGISTRY_REPO}.git"
+
+          if as_user git ls-remote "$REGISTRY_URL" &>/dev/null; then
             echo "📥 Found existing backup registry"
-            
-            # Clone registry as USER
-            sudo -u $WORKSPACE_USER git clone --depth=1 "$REGISTRY_URL" /tmp/backup-registry
-            
+            rm -rf /tmp/backup-registry
+            as_user git clone --depth=1 "$REGISTRY_URL" /tmp/backup-registry
+
             if [ -f /tmp/backup-registry/README.md ]; then
               echo "📋 Restoring projects from registry..."
-              
-              # Process each repository
-              grep -oP '^\s*-\s*\K[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+' /tmp/backup-registry/README.md | while read repo; do
+              sed -nE 's/^[[:space:]]*-[[:space:]]+([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+).*$/\1/p' \
+                /tmp/backup-registry/README.md | while read -r repo; do
                 PROJECT_NAME=$(basename "$repo")
                 PROJECT_URL="https://x-access-token:${GH_TOKEN}@github.com/${repo}.git"
-                
                 echo "  📦 Restoring: $PROJECT_NAME"
-                
-                # Clone as USER to workspace
-                if sudo -u $WORKSPACE_USER git clone --depth=1 "$PROJECT_URL" "$WORKSPACE_DIR/$PROJECT_NAME" 2>/dev/null; then
+                if as_user git clone --depth=1 "$PROJECT_URL" "$WORKSPACE_DIR/$PROJECT_NAME" </dev/null 2>/dev/null; then
                   echo "    ✅ Restored"
                 else
                   echo "    ⚠️  Skipped (may not exist)"
                 fi
               done
             fi
-            
-            # Cleanup
-            sudo rm -rf /tmp/backup-registry
-            
+            rm -rf /tmp/backup-registry
+
           else
             echo "📝 Creating new backup registry..."
-            
-            # Create registry as USER
-            sudo -u $WORKSPACE_USER mkdir -p /tmp/new-registry
-            
-            # Create README
-            sudo -u $WORKSPACE_USER bash -c 'cat > /tmp/new-registry/README.md << "EOFREADME"
-# 🗂️ Backup Registry
+            rm -rf /tmp/new-registry
+            as_user mkdir -p /tmp/new-registry
+            printf '# 🗂️ Backup Registry\n\nAuto-managed project list for cloud workstation.\n\n## Projects:\n\n' \
+              | as_user tee /tmp/new-registry/README.md >/dev/null
 
-Auto-managed project list for cloud workstation.
+            as_user git -C /tmp/new-registry init -q
+            as_user git -C /tmp/new-registry add README.md
+            as_user git -C /tmp/new-registry commit -q -m "Initialize backup registry"
+            as_user git -C /tmp/new-registry branch -M main
 
-## Projects:
-
-EOFREADME'
-            
-            # Git operations as USER
-            cd /tmp/new-registry
-            sudo -u $WORKSPACE_USER git init
-            sudo -u $WORKSPACE_USER git add README.md
-            sudo -u $WORKSPACE_USER git commit -m "Initialize backup registry"
-            sudo -u $WORKSPACE_USER git branch -M main
-            
-            # Create repo via API
             curl -s -X POST \
               -H "Authorization: token ${GH_TOKEN}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/user/repos \
-              -d "{\"name\":\"${BACKUP_REGISTRY_REPO}\",\"private\":true}" > /dev/null 2>&1 || true
-            
+              -d "{\"name\":\"${BACKUP_REGISTRY_REPO}\",\"private\":true}" >/dev/null 2>&1 || true
             sleep 3
-            
-            # Push as USER
-            sudo -u $WORKSPACE_USER git remote add origin "$REGISTRY_URL"
-            sudo -u $WORKSPACE_USER git push -u origin main 2>/dev/null || echo "⚠️  Initial push may have timed out, will retry later"
-            
-            # Cleanup
-            cd /
-            sudo rm -rf /tmp/new-registry
-            
+
+            as_user git -C /tmp/new-registry remote add origin "$REGISTRY_URL"
+            as_user git -C /tmp/new-registry push -q -u origin main 2>/dev/null \
+              || echo "⚠️  Initial push failed, watcher will retry on first backup"
+            rm -rf /tmp/new-registry
             echo "✅ Registry created"
           fi
-          
+
           echo "✅ Restore phase completed"
 
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # 🛠️ PHASE 4: Development Tools
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
+
       - name: 🐍 Install Python
         run: |
           set -e
-          echo "🐍 Installing Python..."
-          sudo apt-get install -y python3 python3-pip python3-venv
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+          command -v python3 >/dev/null || brew install python
           python3 --version
+          python3 -m pip --version || true
           echo "✅ Python ready"
 
       - name: 📗 Install Node.js & NPM
         run: |
           set -e
-          echo "📗 Installing Node.js LTS..."
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-          sudo apt-get install -y nodejs
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+          command -v node >/dev/null || brew install node
           node --version
           npm --version
           echo "✅ Node.js ready"
@@ -301,235 +261,240 @@ EOFREADME'
       - name: 💻 Install VS Code
         run: |
           set -e
-          echo "💻 Installing Visual Studio Code..."
-          wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-          sudo install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-          sudo sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
-          rm packages.microsoft.gpg
-          sudo apt-get update -qq
-          sudo apt-get install -y code
-          echo "✅ VS Code ready"
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+          brew install --cask visual-studio-code
+          if [ -d "/Applications/Visual Studio Code.app" ]; then
+            echo "✅ VS Code ready"
+          else
+            echo "❌ VS Code app not found"
+            exit 1
+          fi
 
       - name: 🌌 Install Google Antigravity IDE (Fail-Safe)
+        continue-on-error: true
         run: |
-          set +e  # Don't exit on error for this step
+          set +e
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
           echo "🌌 Attempting Antigravity IDE installation..."
-          
-          # Try direct download
-          if wget -q --timeout=10 https://dl.google.com/linux/direct/antigravity-ide_latest_amd64.deb 2>/dev/null; then
-            sudo dpkg -i antigravity-ide_latest_amd64.deb 2>/dev/null && sudo apt-get install -f -y 2>/dev/null
-            if command -v antigravity-ide &> /dev/null; then
-              echo "✅ Antigravity IDE installed"
-            else
-              echo "⚠️  Antigravity IDE installation incomplete, skipping..."
-            fi
+          if brew install --cask antigravity; then
+            echo "✅ Antigravity IDE installed"
           else
-            # Try snap as fallback
-            if sudo snap install antigravity-ide 2>/dev/null; then
-              echo "✅ Antigravity IDE installed via snap"
-            else
-              echo "⚠️  Antigravity IDE not available, continuing without it..."
-            fi
+            echo "⚠️  Antigravity IDE not available via Homebrew, continuing without it..."
           fi
-          
-          # Always succeed this step
           exit 0
 
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      # 🧠 PHASE 5: Real-Time Backup Watcher
+      # 🧠 PHASE 5: Real-Time Backup Watcher (macOS)
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
-      - name: 👁️ Deploy inotify Backup System
+
+      - name: 👁️ Deploy Backup Watcher
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          echo "👁️ Deploying real-time backup watcher..."
-          
-          # Create backup script as USER
-          sudo -u $WORKSPACE_USER bash -c 'cat > /home/$WORKSPACE_USER/backup-watcher.sh << '\''EOFSCRIPT'\''
-#!/bin/bash
-set -e
+          echo "👁️ Deploying backup watcher..."
 
-# Environment variables
-WORKSPACE_DIR="/home/sandsneha/Desktop/sand"
-WORKSPACE_USER="sandsneha"
-BACKUP_REGISTRY_REPO="backup-files"
-GH_TOKEN="'"$GH_TOKEN"'"
+          # Config + token live in a 600 file (not inside the script)
+          sudo tee "$USER_HOME/.backup-env" >/dev/null <<EOF
+          export GH_TOKEN="${GH_TOKEN}"
+          export GH_OWNER="${GH_OWNER}"
+          export WORKSPACE_DIR="${WORKSPACE_DIR}"
+          export BACKUP_REGISTRY_REPO="${BACKUP_REGISTRY_REPO}"
+          EOF
+          sudo chown "$WORKSPACE_USER":staff "$USER_HOME/.backup-env"
+          sudo chmod 600 "$USER_HOME/.backup-env"
 
-LOCKFILE="/tmp/backup.lock"
-REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/${WORKSPACE_USER}/${BACKUP_REGISTRY_REPO}.git"
+          # macOS has no inotify/flock, so: poll for new folders + mkdir lock
+          sudo tee "$USER_HOME/backup-watcher.sh" >/dev/null <<'EOFSCRIPT'
+          #!/bin/bash
+          export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          export GIT_TERMINAL_PROMPT=0
+          source "$HOME/.backup-env"
 
-# Function: Update registry with file locking
-update_registry() {
-    local PROJECT_NAME=$1
-    local PROJECT_REPO="${WORKSPACE_USER}/${PROJECT_NAME}"
-    
-    # Acquire lock
-    exec 200>"$LOCKFILE"
-    flock -x 200
-    
-    # Clone registry
-    cd /tmp
-    rm -rf backup-registry-temp
-    git clone --depth=1 "$REGISTRY_URL" backup-registry-temp 2>/dev/null || {
-        echo "  ⚠️  Failed to clone registry"
-        flock -u 200
-        return 1
-    }
-    
-    cd backup-registry-temp
-    
-    # Check if already exists
-    if ! grep -q "^- ${PROJECT_REPO}$" README.md 2>/dev/null; then
-        echo "- ${PROJECT_REPO}" >> README.md
-        git add README.md
-        git commit -m "Add project: ${PROJECT_NAME}"
-        git push origin main 2>/dev/null
-        echo "  ✅ Registry updated"
-    else
-        echo "  ℹ️  Already in registry"
-    fi
-    
-    cd /tmp
-    rm -rf backup-registry-temp
-    
-    # Release lock
-    flock -u 200
-}
+          REGISTRY_URL="https://x-access-token:${GH_TOKEN}@github.com/${GH_OWNER}/${BACKUP_REGISTRY_REPO}.git"
+          LOCKDIR="/tmp/backup.lock.d"
+          SEEN_FILE="/tmp/backup-seen.txt"
 
-# Function: Process new directory
-process_new_directory() {
-    local DIR_PATH=$1
-    local PROJECT_NAME=$(basename "$DIR_PATH")
-    
-    echo ""
-    echo "🔍 New directory detected: $PROJECT_NAME"
-    
-    # Debounce: Wait for files
-    echo "  ⏳ Waiting for files to settle (15s)..."
-    sleep 15
-    
-    # Check if has content
-    if [ -z "$(ls -A "$DIR_PATH" 2>/dev/null)" ]; then
-        echo "  ⚠️  Empty directory, skipping"
-        return
-    fi
-    
-    echo "  📦 Creating GitHub repository..."
-    
-    # Create private repo
-    REPO_CREATE=$(curl -s -X POST \
-      -H "Authorization: token ${GH_TOKEN}" \
-      -H "Accept: application/vnd.github.v3+json" \
-      https://api.github.com/user/repos \
-      -d "{\"name\":\"${PROJECT_NAME}\",\"private\":true}")
-    
-    sleep 3
-    
-    # Initialize and push
-    cd "$DIR_PATH"
-    
-    if [ ! -d .git ]; then
-        git init
-        git add .
-        git commit -m "Initial commit from cloud workstation" 2>/dev/null || {
-            echo "  ⚠️  Nothing to commit"
-            return
-        }
-        git branch -M main
-        git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${WORKSPACE_USER}/${PROJECT_NAME}.git"
-    fi
-    
-    if git push -u origin main 2>/dev/null; then
-        echo "  ✅ Pushed to GitHub"
-        update_registry "$PROJECT_NAME"
-    else
-        echo "  ❌ Push failed"
-    fi
-}
+          update_registry() {
+              local PROJECT_NAME="$1"
+              local PROJECT_REPO="${GH_OWNER}/${PROJECT_NAME}"
+              local TMP="/tmp/backup-registry-temp-$$"
+              local waited=0
 
-# Main monitoring loop
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "👁️  Backup Watcher Active"
-echo "📂 Monitoring: $WORKSPACE_DIR"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+              until mkdir "$LOCKDIR" 2>/dev/null; do
+                  sleep 1
+                  waited=$((waited + 1))
+                  if [ "$waited" -ge 120 ]; then rm -rf "$LOCKDIR"; fi
+              done
 
-inotifywait -m -e create --format '\''%w%f'\'' "$WORKSPACE_DIR" 2>/dev/null | while read NEW_PATH; do
-    if [ -d "$NEW_PATH" ]; then
-        process_new_directory "$NEW_PATH" &
-    fi
-done
-EOFSCRIPT'
-          
-          # Make executable
-          sudo chmod +x /home/$WORKSPACE_USER/backup-watcher.sh
-          
-          # Verify script exists
-          if [ ! -f /home/$WORKSPACE_USER/backup-watcher.sh ]; then
+              rm -rf "$TMP"
+              if git clone -q --depth=1 "$REGISTRY_URL" "$TMP" 2>/dev/null; then
+                  if ! grep -Fxq -- "- ${PROJECT_REPO}" "$TMP/README.md" 2>/dev/null; then
+                      if [ -n "$(tail -c1 "$TMP/README.md")" ]; then echo >> "$TMP/README.md"; fi
+                      echo "- ${PROJECT_REPO}" >> "$TMP/README.md"
+                      git -C "$TMP" add README.md
+                      git -C "$TMP" commit -q -m "Add project: ${PROJECT_NAME}"
+                      if git -C "$TMP" push -q origin main 2>/dev/null; then
+                          echo "  ✅ Registry updated"
+                      else
+                          echo "  ⚠️  Registry push failed"
+                      fi
+                  else
+                      echo "  ℹ️  Already in registry"
+                  fi
+              else
+                  echo "  ⚠️  Failed to clone registry"
+              fi
+
+              rm -rf "$TMP"
+              rmdir "$LOCKDIR" 2>/dev/null
+          }
+
+          process_new_directory() {
+              local DIR_PATH="$1"
+              local PROJECT_NAME
+              PROJECT_NAME=$(basename "$DIR_PATH")
+
+              echo ""
+              echo "🔍 New directory detected: $PROJECT_NAME"
+              echo "  ⏳ Waiting for files to settle (15s)..."
+              sleep 15
+
+              if [ -z "$(ls -A "$DIR_PATH" 2>/dev/null)" ]; then
+                  echo "  ⚠️  Empty directory, skipping"
+                  return
+              fi
+
+              echo "  📦 Creating GitHub repository..."
+              local CODE
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                -H "Authorization: token ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/user/repos \
+                -d "{\"name\":\"${PROJECT_NAME}\",\"private\":true}")
+              echo "  GitHub API: HTTP $CODE (201 = created, 422 = already exists)"
+              sleep 3
+
+              cd "$DIR_PATH" || return
+              [ -d .git ] || git init -q
+              git add -A
+              git commit -q -m "Initial commit from cloud workstation" 2>/dev/null || echo "  ℹ️  Nothing new to commit"
+              git branch -M main 2>/dev/null
+              git remote get-url origin >/dev/null 2>&1 || \
+                  git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_OWNER}/${PROJECT_NAME}.git"
+
+              if git push -q -u origin main 2>/dev/null; then
+                  echo "  ✅ Pushed to GitHub"
+                  update_registry "$PROJECT_NAME"
+              else
+                  echo "  ❌ Push failed"
+              fi
+          }
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "👁️  Backup Watcher Active"
+          echo "📂 Monitoring: $WORKSPACE_DIR"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Everything already present (e.g. restored projects) counts as seen
+          : > "$SEEN_FILE"
+          for p in "$WORKSPACE_DIR"/*/; do
+              if [ -d "$p" ]; then basename "$p" >> "$SEEN_FILE"; fi
+          done
+
+          while true; do
+              for p in "$WORKSPACE_DIR"/*/; do
+                  [ -d "$p" ] || continue
+                  name=$(basename "$p")
+                  if ! grep -Fxq -- "$name" "$SEEN_FILE"; then
+                      echo "$name" >> "$SEEN_FILE"
+                      process_new_directory "${p%/}" &
+                  fi
+              done
+              sleep 5
+          done
+          EOFSCRIPT
+
+          sudo chown "$WORKSPACE_USER":staff "$USER_HOME/backup-watcher.sh"
+          sudo chmod 700 "$USER_HOME/backup-watcher.sh"
+
+          if [ ! -f "$USER_HOME/backup-watcher.sh" ]; then
             echo "❌ Backup script creation failed"
             exit 1
           fi
-          
-          # Start watcher in background as USER
-          sudo -u $WORKSPACE_USER nohup /home/$WORKSPACE_USER/backup-watcher.sh > /tmp/backup-watcher.log 2>&1 &
-          
-          sleep 2
-          
-          echo "✅ Backup watcher deployed and running"
+
+          sudo -H -u "$WORKSPACE_USER" nohup "$USER_HOME/backup-watcher.sh" > /tmp/backup-watcher.log 2>&1 &
+          disown || true
+          sleep 3
+
+          if pgrep -f "backup-watcher.sh" >/dev/null; then
+            echo "✅ Backup watcher deployed and running"
+          else
+            echo "❌ Backup watcher died on start:"
+            cat /tmp/backup-watcher.log
+            exit 1
+          fi
 
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       # 💚 PHASE 6: Keep-Alive & Monitoring
       #━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
+
       - name: 💚 Keep Workstation Alive
         run: |
-          set -e
-          
+          KICKSTART="/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart"
+
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ CLOUD WORKSTATION IS READY!"
+          echo "✅ MACOS WORKSTATION IS READY!"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
           echo "🎯 Status:"
-          echo "   • VNC Server: Running on port $VNC_PORT"
+          echo "   • Screen Sharing (VNC): port $VNC_PORT"
           echo "   • Cloudflare Tunnel: Active (see connection command above)"
           echo "   • Backup Watcher: Monitoring $WORKSPACE_DIR"
           echo "   • Max Runtime: 6 hours (GitHub Actions limit)"
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
-          
-          # Health monitoring function
+
           check_health() {
-            # Check VNC
-            if ! sudo -u $WORKSPACE_USER vncserver -list | grep -q "$VNC_DISPLAY"; then
-              echo "⚠️  VNC server stopped, restarting..."
-              sudo -u $WORKSPACE_USER vncserver $VNC_DISPLAY -geometry 1920x1080 -depth 24 -localhost no
+            # Screen Sharing
+            if ! nc -z 127.0.0.1 "$VNC_PORT" 2>/dev/null; then
+              echo "⚠️  Screen Sharing down, restarting..."
+              sudo "$KICKSTART" -restart -agent || true
+              sudo launchctl kickstart -k system/com.apple.screensharing 2>/dev/null || true
             fi
-            
-            # Check backup watcher
-            if ! pgrep -f "backup-watcher.sh" > /dev/null; then
+
+            # Backup watcher
+            if ! pgrep -f "backup-watcher.sh" >/dev/null; then
               echo "⚠️  Backup watcher stopped, restarting..."
-              sudo -u $WORKSPACE_USER nohup /home/$WORKSPACE_USER/backup-watcher.sh > /tmp/backup-watcher.log 2>&1 &
+              sudo -H -u "$WORKSPACE_USER" nohup "$USER_HOME/backup-watcher.sh" > /tmp/backup-watcher.log 2>&1 &
+            fi
+
+            # Cloudflare tunnel (a restart gives a NEW url)
+            if ! pgrep -f "cloudflared tunnel" >/dev/null; then
+              echo "⚠️  Tunnel stopped, restarting (URL will change)..."
+              nohup cloudflared tunnel --no-autoupdate --url "tcp://localhost:$VNC_PORT" > /tmp/cloudflare.log 2>&1 &
+              sleep 15
+              NEW_HOST=$(sed -nE 's#.*https://([a-zA-Z0-9-]+\.trycloudflare\.com).*#\1#p' /tmp/cloudflare.log | head -1)
+              echo "🆕 New command: cloudflared access tcp --hostname $NEW_HOST --url 127.0.0.1:5901"
             fi
           }
-          
-          # Keep alive loop
+
           COUNTER=0
           while true; do
             sleep 30
             COUNTER=$((COUNTER + 1))
-            
+
             # Health check every 30 minutes
             if [ $((COUNTER % 60)) -eq 0 ]; then
               HOURS=$((COUNTER / 120))
               echo "🏥 Health check (Runtime: ${HOURS}h)"
-              check_health
+              check_health || true
             fi
-            
+
             # Warning at 5.5 hours
-            if [ $COUNTER -eq 660 ]; then
+            if [ "$COUNTER" -eq 660 ]; then
               echo ""
               echo "⚠️⚠️⚠️  WARNING  ⚠️⚠️⚠️"
               echo "Approaching 6-hour limit. Workflow will end in ~30 minutes."
