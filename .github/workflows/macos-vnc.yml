@@ -18,7 +18,7 @@ on:
 
 env:
   WORKSPACE_USER: sandsneha          # macOS account that gets created
-  GH_OWNER: sandsneha                # GitHub account that owns backup repos
+  GH_OWNER_DEFAULT: sandsneha        # fallback GitHub owner (auto-detected from token when possible)
   USER_HOME: /Users/sandsneha
   WORKSPACE_DIR: /Users/sandsneha/Desktop/sand
   VNC_PORT: 5900                     # macOS built-in Screen Sharing port
@@ -42,6 +42,33 @@ jobs:
           brew install cloudflared jq
           cloudflared --version
           echo "✅ Tools installed"
+
+      - name: 🔑 Check GitHub Token
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.GH_TOKEN != '' }}
+        run: |
+          set -e
+          if [ "$HAS_PAT" != "true" ]; then
+            echo "::warning::GH_TOKEN secret not set - falling back to GITHUB_TOKEN. It CANNOT create repos in your account, so backups will fail. Add a PAT (classic, 'repo' scope) as secret GH_TOKEN."
+          fi
+
+          CODE=$(curl -s -D /tmp/gh-headers.txt -o /tmp/gh-user.json -w "%{http_code}" \
+            -H "Authorization: token ${GH_TOKEN}" https://api.github.com/user || true)
+          echo "GitHub /user -> HTTP $CODE"
+
+          if [ "$CODE" = "200" ]; then
+            LOGIN=$(jq -r .login /tmp/gh-user.json)
+            echo "✅ Token belongs to: $LOGIN"
+            echo "   Scopes: $(grep -i '^x-oauth-scopes' /tmp/gh-headers.txt | cut -d: -f2- | tr -d '\r')"
+            if [ "$LOGIN" != "$GH_OWNER_DEFAULT" ]; then
+              echo "ℹ️  Backups will go to $LOGIN (not $GH_OWNER_DEFAULT) because that is who the token belongs to"
+            fi
+            echo "GH_OWNER=$LOGIN" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Token cannot read /user (HTTP $CODE) - GitHub backups will likely fail. Using owner: $GH_OWNER_DEFAULT"
+            echo "GH_OWNER=$GH_OWNER_DEFAULT" >> "$GITHUB_ENV"
+          fi
 
       - name: 👤 Create User & Fix Permissions
         env:
@@ -189,7 +216,7 @@ jobs:
 
           if as_user git ls-remote "$REGISTRY_URL" &>/dev/null; then
             echo "📥 Found existing backup registry"
-            rm -rf /tmp/backup-registry
+            sudo rm -rf /tmp/backup-registry
             as_user git clone --depth=1 "$REGISTRY_URL" /tmp/backup-registry
 
             if [ -f /tmp/backup-registry/README.md ]; then
@@ -206,11 +233,11 @@ jobs:
                 fi
               done
             fi
-            rm -rf /tmp/backup-registry
+            sudo rm -rf /tmp/backup-registry
 
           else
             echo "📝 Creating new backup registry..."
-            rm -rf /tmp/new-registry
+            sudo rm -rf /tmp/new-registry
             as_user mkdir -p /tmp/new-registry
             printf '# 🗂️ Backup Registry\n\nAuto-managed project list for cloud workstation.\n\n## Projects:\n\n' \
               | as_user tee /tmp/new-registry/README.md >/dev/null
@@ -220,18 +247,25 @@ jobs:
             as_user git -C /tmp/new-registry commit -q -m "Initialize backup registry"
             as_user git -C /tmp/new-registry branch -M main
 
-            curl -s -X POST \
+            CODE=$(curl -s -o /tmp/gh-create.json -w "%{http_code}" -X POST \
               -H "Authorization: token ${GH_TOKEN}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/user/repos \
-              -d "{\"name\":\"${BACKUP_REGISTRY_REPO}\",\"private\":true}" >/dev/null 2>&1 || true
+              -d "{\"name\":\"${BACKUP_REGISTRY_REPO}\",\"private\":true}" || true)
+            echo "   GitHub create-repo: HTTP $CODE (201 = created, 422 = already exists)"
+            if [ "$CODE" != "201" ] && [ "$CODE" != "422" ]; then
+              echo "   ↳ $(jq -r .message /tmp/gh-create.json 2>/dev/null)"
+            fi
             sleep 3
 
             as_user git -C /tmp/new-registry remote add origin "$REGISTRY_URL"
-            as_user git -C /tmp/new-registry push -q -u origin main 2>/dev/null \
-              || echo "⚠️  Initial push failed, watcher will retry on first backup"
-            rm -rf /tmp/new-registry
-            echo "✅ Registry created"
+            if PUSH_OUT=$(as_user git -C /tmp/new-registry push -q -u origin main 2>&1); then
+              echo "✅ Registry created and pushed to ${GH_OWNER}/${BACKUP_REGISTRY_REPO}"
+            else
+              echo "⚠️  Registry push failed (GitHub backups will not work until this is fixed):"
+              echo "$PUSH_OUT" | sed "s/${GH_TOKEN}/***/g"
+            fi
+            sudo rm -rf /tmp/new-registry
           fi
 
           echo "✅ Restore phase completed"
@@ -383,11 +417,11 @@ jobs:
               git remote get-url origin >/dev/null 2>&1 || \
                   git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_OWNER}/${PROJECT_NAME}.git"
 
-              if git push -q -u origin main 2>/dev/null; then
+              if PUSH_OUT=$(git push -q -u origin main 2>&1); then
                   echo "  ✅ Pushed to GitHub"
                   update_registry "$PROJECT_NAME"
               else
-                  echo "  ❌ Push failed"
+                  echo "  ❌ Push failed: $(echo "$PUSH_OUT" | sed "s/${GH_TOKEN}/***/g" | tail -3)"
               fi
           }
 
@@ -480,6 +514,9 @@ jobs:
               echo "🆕 New command: cloudflared access tcp --hostname $NEW_HOST --url 127.0.0.1:5901"
             fi
           }
+
+          # Stream the backup watcher log into this job log (otherwise it is invisible)
+          tail -n +1 -F /tmp/backup-watcher.log 2>/dev/null &
 
           COUNTER=0
           while true; do
